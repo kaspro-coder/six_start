@@ -10,8 +10,18 @@ export default function DocViewer({ cite, onClose }) {
 
   const meta    = SOURCE_META[cite.source_type] ?? { Icon: FileText, label: 'Document', cls: 'bg-neutral-100 text-neutral-600' }
   const isPdf   = cite.document?.toLowerCase().endsWith('.pdf')
-  const search  = cite.content ? extractSearchPhrase(cite.content) : ''
-  const docUrl  = `/api/documents/${encodeURIComponent(cite.document)}${isPdf && search ? `#search=${encodeURIComponent(search)}` : ''}`
+  const isDocx  = cite.document?.toLowerCase().endsWith('.docx')
+  const hasPage = isPdf && cite.page != null
+
+  let docUrl
+  if (isDocx) {
+    docUrl = `/api/documents/${encodeURIComponent(cite.document)}/html`
+  } else if (hasPage) {
+    docUrl = `/api/documents/${encodeURIComponent(cite.document)}/pages/${cite.page}`
+  } else {
+    const search = cite.content ? extractSearchPhrase(cite.content) : ''
+    docUrl = `/api/documents/${encodeURIComponent(cite.document)}${search ? `#search=${encodeURIComponent(search)}` : ''}`
+  }
 
   return (
     <div className="flex flex-col h-full border-l border-neutral-200/80 bg-white animate-fade-in">
@@ -23,6 +33,9 @@ export default function DocViewer({ cite, onClose }) {
             {meta.label}
           </div>
           <p className="text-xs font-semibold text-ink truncate">{cleanName(cite.document)}</p>
+          {hasPage && (
+            <p className="text-[10px] text-neutral-400 mt-0.5">Page {cite.page + 1} · showing ±1 page window</p>
+          )}
         </div>
         <button
           onClick={onClose}
@@ -44,7 +57,7 @@ export default function DocViewer({ cite, onClose }) {
 
       {/* Document */}
       <div className="flex-1 min-h-0">
-        {isPdf ? (
+        {isPdf || isDocx ? (
           <iframe
             src={docUrl}
             className="w-full h-full border-0"
@@ -56,7 +69,7 @@ export default function DocViewer({ cite, onClose }) {
             <p className="text-xs font-semibold text-ink">{cleanName(cite.document)}</p>
             <p className="text-[10px] text-neutral-400">Preview not available for this file type.</p>
             <a
-              href={docUrl}
+              href={`/api/documents/${encodeURIComponent(cite.document)}`}
               download={cite.document}
               className="mt-1 text-[11px] font-semibold text-six hover:underline"
             >

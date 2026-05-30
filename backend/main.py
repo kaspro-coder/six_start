@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 try:  # load backend/.env (e.g. ANTHROPIC_API_KEY) if python-dotenv is present
@@ -69,6 +69,7 @@ class Source(BaseModel):
     index: int
     source_type: str  # "official_rulebook" | "tacit_expert_knowledge"
     document: str  # filename the chunk came from
+    page: int | None = None  # 0-indexed page number from PyPDFLoader metadata
 
 
 class AnswerStep(BaseModel):
@@ -263,6 +264,70 @@ def serve_document(filename: str):
     return FileResponse(path)
 
 
+@app.get("/api/documents/{filename}/html", response_class=HTMLResponse)
+def serve_document_html(filename: str):
+    path = (SOURCES_DIR / filename).resolve()
+    if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not filename.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="HTML conversion only supported for .docx files")
+    try:
+        import mammoth
+        with open(path, "rb") as f:
+            result = mammoth.convert_to_html(f)
+        html_body = result.value
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"DOCX conversion failed: {exc}")
+    return HTMLResponse(content=f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {{ font-family: Inter, system-ui, sans-serif; font-size: 13px; line-height: 1.6;
+         color: #1A1A1A; padding: 24px 32px; max-width: 780px; margin: 0 auto; }}
+  h1, h2, h3 {{ font-family: 'Hanken Grotesk', sans-serif; margin-top: 1.5em; }}
+  h1 {{ font-size: 1.4em; }} h2 {{ font-size: 1.2em; }} h3 {{ font-size: 1.05em; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
+  th, td {{ border: 1px solid #e5e5e5; padding: 6px 10px; text-align: left; }}
+  th {{ background: #f7f5f3; font-weight: 600; }}
+  p {{ margin: 0.6em 0; }}
+  ul, ol {{ padding-left: 1.4em; }}
+</style>
+</head>
+<body>{html_body}</body>
+</html>""")
+
+
+@app.get("/api/documents/{filename}/pages/{page}")
+def serve_document_page(filename: str, page: int):
+    """Serve a 3-page window (page-1, page, page+1) around the cited page as a PDF."""
+    path = (SOURCES_DIR / filename).resolve()
+    if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Page extraction only supported for PDF files")
+    try:
+        import io
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(str(path))
+        total = len(reader.pages)
+        start = max(0, page - 1)
+        end = min(total - 1, page + 1)
+        writer = PdfWriter()
+        for p in range(start, end + 1):
+            writer.add_page(reader.pages[p])
+        buf = io.BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}_p{page}.pdf"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Page extraction failed: {exc}")
+
+
 @app.post("/api/process-workflow", response_model=WorkflowResponse)
 def process_workflow(payload: WorkflowPayload) -> WorkflowResponse:
     """Mock-process a captured rrweb session into a structured procedure."""
@@ -319,7 +384,8 @@ def ask(req: AskRequest) -> AskResponse:
     for stype, chunks in (("official_rulebook", official), ("tacit_expert_knowledge", expert)):
         for c in chunks:
             doc = str(c.metadata.get("source", "?")).rsplit("/", 1)[-1]
-            sources.append(Source(index=idx, source_type=stype, document=doc))
+            page = c.metadata.get("page")  # 0-indexed; None for DOCX
+            sources.append(Source(index=idx, source_type=stype, document=doc, page=page))
             idx += 1
 
     # Synthesize a grounded answer with Claude. If the SDK isn't installed, no
