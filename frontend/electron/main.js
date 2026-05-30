@@ -21,7 +21,7 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'floating')
 
   if (!app.isPackaged) {
-    win.loadURL('http://localhost:5173')
+    win.loadURL(process.env.ELECTRON_START_URL || 'http://localhost:5173')
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }

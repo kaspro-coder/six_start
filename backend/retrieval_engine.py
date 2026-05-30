@@ -1,3 +1,5 @@
+from pathlib import Path
+
 try:
     from langchain_chroma import Chroma
 except ImportError:
@@ -11,7 +13,7 @@ except ImportError:
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_MODEL_KWARGS = {"local_files_only": False}
-CHROMA_DB_DIR = "./chroma_db"
+CHROMA_DB_DIR = str(Path(__file__).resolve().parent / "chroma_db")
 
 
 def _load_vector_store():

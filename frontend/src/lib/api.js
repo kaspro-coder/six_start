@@ -84,3 +84,69 @@ export async function askAgent(question) {
   }
   return res.json()
 }
+
+// ── Knowledge & context engine (specs 09 / 10 / 11) ──────────────────────
+
+async function postJson(path, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText)
+    throw new Error(`Backend error ${res.status}: ${detail}`)
+  }
+  return res.json()
+}
+
+async function getJson(path) {
+  const res = await fetch(`${BASE}${path}`)
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText)
+    throw new Error(`Backend error ${res.status}: ${detail}`)
+  }
+  return res.json()
+}
+
+/**
+ * The trustworthy, source-backed answer pipeline (spec 10). Sends the question
+ * plus the user's working-context snapshot; the backend collects context,
+ * plans the query, retrieves + ranks across corpus and structured knowledge,
+ * scores confidence, and decides whether to escalate.
+ *
+ * @param {string} question
+ * @param {object} context  — { current_page, selected_text, recent_queries, ... }
+ * @returns {Promise<GroundedAnswerResponse>}
+ */
+export function getGroundedAnswer(question, context = {}) {
+  return postJson('/api/answer', { question, context })
+}
+
+/** List responsible experts (for the directory / inbox). */
+export function listExperts() {
+  return getJson('/api/experts')
+}
+
+/** All structured knowledge — seed + resolutions persisted via the loop. */
+export function listKnowledge() {
+  return getJson('/api/knowledge')
+}
+
+/** List knowledge requests (the expert inbox feed). */
+export function listKnowledgeRequests() {
+  return getJson('/api/knowledge-requests')
+}
+
+/** Submit a structured knowledge request from the assistant escalation. */
+export function createKnowledgeRequest(payload) {
+  return postJson('/api/knowledge-requests', payload)
+}
+
+/**
+ * Log an expert resolution; the backend converts it into reusable knowledge
+ * that future questions can cite. Closes the loop (spec 11).
+ */
+export function resolveKnowledgeRequest(requestId, resolution) {
+  return postJson(`/api/knowledge-requests/${requestId}/resolve`, resolution)
+}

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { MessageSquare, Clock, Library } from 'lucide-react'
+import { MessageSquare, Clock, Library, Inbox } from 'lucide-react'
 
 const TABS = [
   { id: 'chat',     label: 'Chat',     Icon: MessageSquare },
+  { id: 'inbox',    label: 'Inbox',    Icon: Inbox },
   { id: 'sessions', label: 'Sessions', Icon: Clock },
   { id: 'library',  label: 'Library',  Icon: Library },
 ]
@@ -21,11 +22,14 @@ function getDefaultPos() {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
-export default function FloatingWindow({ children }) {
-  const [mode,      setMode]      = useState('windowed') // 'compact' | 'windowed' | 'maximized'
-  const [pos,       setPos]       = useState(getDefaultPos)
-  const [size,      setSize]      = useState({ w: DEFAULT_W, h: DEFAULT_H })
-  const [activeTab, setActiveTab] = useState('chat')
+export default function FloatingWindow({ children, activeTab: controlledTab, onTabChange, tabBadges = {} }) {
+  const [mode,         setMode]        = useState('windowed') // 'compact' | 'windowed' | 'maximized'
+  const [pos,          setPos]         = useState(getDefaultPos)
+  const [size,         setSize]        = useState({ w: DEFAULT_W, h: DEFAULT_H })
+  const [internalTab,  setInternalTab] = useState('chat')
+  // Controlled by the parent when activeTab/onTabChange are provided, else local.
+  const activeTab    = controlledTab ?? internalTab
+  const setActiveTab = onTabChange ?? setInternalTab
 
   const dragRef   = useRef(null)
   const resizeRef = useRef(null)
@@ -166,7 +170,7 @@ export default function FloatingWindow({ children }) {
       </div>
 
       {/* ── Tab bar ────────────────────────────────────────────────────── */}
-      <TabBar active={activeTab} onChange={setActiveTab} />
+      <TabBar active={activeTab} onChange={setActiveTab} badges={tabBadges} />
 
       {/* ── Content ────────────────────────────────────────────────────── */}
       <div className="flex-1 min-h-0 overflow-hidden select-text">
@@ -188,23 +192,31 @@ export default function FloatingWindow({ children }) {
   )
 }
 
-function TabBar({ active, onChange }) {
+function TabBar({ active, onChange, badges = {} }) {
   return (
     <div className="no-drag flex items-center gap-0.5 px-4 py-2 bg-white border-b border-neutral-200/80 shrink-0">
-      {TABS.map(({ id, label, Icon }) => (
-        <button
-          key={id}
-          onClick={() => onChange(id)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            active === id
-              ? 'bg-six-light text-six'
-              : 'text-neutral-400 hover:text-ink hover:bg-neutral-50'
-          }`}
-        >
-          <Icon size={13} />
-          {label}
-        </button>
-      ))}
+      {TABS.map(({ id, label, Icon }) => {
+        const count = badges[id] ?? 0
+        return (
+          <button
+            key={id}
+            onClick={() => onChange(id)}
+            className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              active === id
+                ? 'bg-six-light text-six'
+                : 'text-neutral-400 hover:text-ink hover:bg-neutral-50'
+            }`}
+          >
+            <Icon size={13} />
+            {label}
+            {count > 0 && (
+              <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-six px-1 text-[9px] font-bold text-white shadow-six-glow animate-fade-in">
+                {count}
+              </span>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }

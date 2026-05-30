@@ -33,6 +33,9 @@ backend/chroma_db/
 chroma_db/
 backend/SIX_Git_Sources/
 
+# ── Knowledge-loop runtime state (auto-created; per-machine demo data) ─
+backend/data/
+
 # ── Skill tooling (huashu-design install — not part of the app) ───────
 .agents/
 .claude/
