@@ -64,6 +64,7 @@ const GREETING = {
 export default function ChatPane({ capturedProcedures = [], initialMessages, onMessagesChange, onSelectExpert, onRequestCreated, onGoToInbox }) {
   const [messages,   setMessages]   = useState(initialMessages ?? [GREETING])
   const [input,      setInput]      = useState('')
+  const [mode,       setMode]       = useState('default') // 'default' | 'expert'
   const [thinking,   setThinking]   = useState(false)
   const [activeCite, setActiveCite] = useState(null)
   const [splitPct,   setSplitPct]   = useState(50)
@@ -168,7 +169,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
         recentQueries,
         screenContext: screenContextRef.current,
       })
-      const grounded = await getGroundedAnswer(question, context)
+      const grounded = await getGroundedAnswer(question, context, mode)
       if (grounded && grounded.engine !== 'unavailable') {
         setMessages(m => [...m, { role: 'assistant', kind: 'grounded', content: grounded }])
         if (grounded.engine === 'escalation_needed' && grounded.escalation?.request_draft) {
@@ -262,6 +263,8 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
             onRoute={openManualRouting}
             jacobFormer={jacobFormer}
             onToggleJacob={toggleJacobFormer}
+            mode={mode}
+            setMode={setMode}
           />
         ) : (
           <>
@@ -283,7 +286,13 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
       {/* Input */}
       {!isEmpty && (
       <div className="border-t border-neutral-200/70 bg-white p-3 space-y-1.5">
-        <DemoJourney onSubmit={submit} jacobFormer={jacobFormer} onToggleJacob={toggleJacobFormer} compact />
+        <div className="flex items-center justify-between">
+          <DemoJourney onSubmit={submit} jacobFormer={jacobFormer} onToggleJacob={toggleJacobFormer} compact />
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Answer detail</span>
+            <ModeToggle mode={mode} setMode={setMode} />
+          </div>
+        </div>
         <form onSubmit={e => { e.preventDefault(); submit() }} className="flex gap-2">
           <input
             value={input}
@@ -335,7 +344,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   )
 }
 
-function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobFormer, onToggleJacob }) {
+function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobFormer, onToggleJacob, mode, setMode }) {
   return (
     <div className="dot-grid flex-1 flex flex-col items-center justify-center text-center px-5 -mx-4">
       <div className="grid h-11 w-11 place-items-center rounded-2xl bg-six shadow-six-glow mb-3">
@@ -366,6 +375,9 @@ function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobF
           </button>
         </div>
         <RoutingChips matches={routingMatches} onRoute={onRoute} centered />
+        <div className="mt-3 flex justify-center">
+          <ModeToggle mode={mode} setMode={setMode} />
+        </div>
       </form>
       <div className="mt-5 flex flex-col gap-2 w-full">
         {STARTERS.map(q => (
@@ -421,6 +433,31 @@ function DemoJourney({ onSubmit, jacobFormer, onToggleJacob, compact = false }) 
           </button>
         )}
       </div>
+    </div>
+  )
+}
+
+const MODES = [
+  { id: 'default', label: 'Default', hint: 'Concise & conceptual — only the essentials' },
+  { id: 'expert',  label: 'Expert',  hint: 'Full technical detail: references, fields, edge cases' },
+]
+
+function ModeToggle({ mode, setMode }) {
+  return (
+    <div className="inline-flex items-center rounded-lg border border-neutral-200 bg-neutral-50 p-0.5">
+      {MODES.map(m => (
+        <button
+          key={m.id}
+          type="button"
+          title={m.hint}
+          onClick={() => setMode(m.id)}
+          className={`rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors ${
+            mode === m.id ? 'bg-white text-six shadow-sm' : 'text-neutral-400 hover:text-ink'
+          }`}
+        >
+          {m.label}
+        </button>
+      ))}
     </div>
   )
 }

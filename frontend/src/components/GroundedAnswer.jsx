@@ -127,6 +127,7 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
   const isEscalation = data.display_format === 'escalation_needed' || esc?.needed
   const isZeroKnowledge = data.display_format === 'zero_knowledge' || data.engine === 'zero_knowledge'
   const conf = confMeta(data.confidence)
+  const [showExperts, setShowExperts] = useState(false)
 
   return (
     <div className="relative inline-block w-full max-w-[560px] text-left bg-white rounded-2xl rounded-tl-md border border-neutral-200/80 shadow-card overflow-hidden">
@@ -158,16 +159,11 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
           <EscalationBlock esc={esc} onSelectExpert={onSelectExpert} onEscalate={() => onEscalate?.(esc)} />
         )}
 
-        {/* ── Context used ───────────────────────────────────── */}
-        <ContextUsed ctx={data.context_used} plan={data.query_plan} />
+        {/* ── Sources (small chips; expand to full card on click) ─ */}
+        <SourcePanel sources={sources} onCiteClick={onCiteClick} />
 
         <GovernancePanel governance={data.governance} confidenceScore={data.confidence_score} />
 
-        {/* ── Sources ────────────────────────────────────────── */}
-        <SourcePanel sources={sources} onCiteClick={onCiteClick} />
-
-        {/* ── Experts ────────────────────────────────────────── */}
-        {experts.length > 0 && <ExpertPanel experts={experts} onSelectExpert={onSelectExpert} />}
         {employees.length > 0 && <EmployeePanel employees={employees} onSelectExpert={onSelectExpert} />}
 
         {/* ── Confidence & limitations ───────────────────────── */}
@@ -187,6 +183,26 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
           onSelectExpert={onSelectExpert}
           onEscalate={() => onEscalate?.(esc)}
         />
+
+        {/* ── Experts (collapsed; small toggle at bottom-right) ── */}
+        {experts.length > 0 && (
+          <div className="border-t border-neutral-100 pt-2.5">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowExperts(v => !v)}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                  showExperts
+                    ? 'border-six bg-six-light text-six'
+                    : 'border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-six/50 hover:text-six'
+                }`}
+              >
+                <User size={11} /> Experts ({experts.length})
+              </button>
+            </div>
+            {showExperts && <ExpertCards experts={experts} onSelectExpert={onSelectExpert} />}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -299,37 +315,6 @@ function EscalationBlock({ esc, onSelectExpert, onEscalate }) {
   )
 }
 
-function ContextUsed({ ctx, plan }) {
-  if (!ctx) return null
-  const chips = []
-  if (ctx.current_workflow) chips.push({ Icon: MapPin, text: ctx.current_workflow })
-  else if (ctx.current_page) chips.push({ Icon: MapPin, text: ctx.current_page })
-  if (ctx.department) chips.push({ Icon: Building2, text: ctx.department })
-  ;(ctx.target_domains ?? []).forEach(d => chips.push({ Icon: Layers, text: domainLabel(d) }))
-  if (ctx.selected_text_used) chips.push({ Icon: FileText, text: 'Selected text' })
-  chips.push({ Icon: BookOpen, text: `${ctx.retrieved_source_count ?? 0} sources` })
-
-  return (
-    <div className="border-t border-neutral-100 pt-2.5">
-      <div className="flex items-center gap-2 mb-1.5">
-        <SectionLabel>Context used</SectionLabel>
-        {plan?.detected_intent && plan.detected_intent !== 'unknown' && (
-          <span className="rounded-full bg-six-light px-1.5 py-0.5 text-[9px] font-bold text-six">
-            {plan.detected_intent.replace(/_/g, ' ')}
-          </span>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {chips.map((c, i) => (
-          <span key={i} className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-600">
-            <c.Icon size={10} className="text-neutral-400" /> {c.text}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function GovernancePanel({ governance, confidenceScore }) {
   if (!governance && confidenceScore == null) return null
   const score = typeof confidenceScore === 'number' ? `${Math.round(confidenceScore * 100)}%` : 'n/a'
@@ -356,22 +341,44 @@ function GovChip({ label, value }) {
 }
 
 function SourcePanel({ sources, onCiteClick }) {
-  const [expanded, setExpanded] = useState(false)
+  const [open, setOpen] = useState(() => new Set())
   if (!sources?.length) return null
-  const shown = expanded ? sources : sources.slice(0, 2)
+  const toggle = (idx) => setOpen((prev) => {
+    const next = new Set(prev)
+    if (next.has(idx)) next.delete(idx); else next.add(idx)
+    return next
+  })
   return (
     <div className="border-t border-neutral-100 pt-2.5">
       <SectionLabel>Sources</SectionLabel>
-      <div className="mt-2 space-y-1.5">
-        {shown.map((s) => <SourceCard key={s.index} s={s} onCiteClick={onCiteClick} />)}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {sources.map((s) => {
+          const meta = sourceMeta(s.source_type)
+          const isOpen = open.has(s.index)
+          return (
+            <button
+              key={s.index}
+              type="button"
+              onClick={() => toggle(s.index)}
+              className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] transition-colors ${
+                isOpen
+                  ? 'border-six bg-six-light text-six'
+                  : 'border-neutral-200 bg-neutral-50 text-neutral-600 hover:border-six/50 hover:text-six'
+              }`}
+            >
+              <meta.Icon size={10} className={isOpen ? 'text-six' : 'text-neutral-400'} />
+              <span className="font-mono">[{s.index}]</span>
+              <span className="max-w-[150px] truncate">{s.title || cleanDoc(s.document)}</span>
+            </button>
+          )
+        })}
       </div>
-      {sources.length > 2 && (
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className="mt-1.5 text-[10px] font-semibold text-six hover:underline"
-        >
-          {expanded ? 'Show fewer' : `Show all ${sources.length} sources`}
-        </button>
+      {open.size > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {sources.filter((s) => open.has(s.index)).map((s) => (
+            <SourceCard key={s.index} s={s} onCiteClick={onCiteClick} />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -398,7 +405,6 @@ function SourceCard({ s, onCiteClick }) {
             <span className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[9px] font-bold ${trust.cls}`}>{trust.label}</span>
             {s.department && <span className="text-[9px] text-neutral-400">· {s.department}</span>}
             {updated && <span className="inline-flex items-center gap-0.5 text-[9px] text-neutral-400"><Clock size={8} /> {updated}</span>}
-            {s.page_or_line && <span className="text-[9px] font-semibold text-neutral-500">· {s.page_or_line}</span>}
             {typeof s.relevance_score === 'number' && (
               <span className="text-[9px] font-mono text-neutral-400">· {s.relevance_score.toFixed(1)}</span>
             )}
@@ -406,7 +412,7 @@ function SourceCard({ s, onCiteClick }) {
         </div>
       </div>
       {s.relevant_quote && (
-        <blockquote className="mt-1.5 text-[11px] leading-relaxed text-ink bg-amber-50 border-l-2 border-amber-400 px-2 py-1 rounded-r">
+        <blockquote className="mt-1.5 text-[11px] leading-relaxed text-neutral-600 bg-neutral-50 border-l-2 border-six/40 px-2 py-1 rounded-r">
           {s.relevant_quote.slice(0, 180)}{s.relevant_quote.length > 180 ? '…' : ''}
         </blockquote>
       )}
@@ -425,11 +431,9 @@ function SourceCard({ s, onCiteClick }) {
   )
 }
 
-function ExpertPanel({ experts, onSelectExpert }) {
+function ExpertCards({ experts, onSelectExpert }) {
   return (
-    <div className="border-t border-neutral-100 pt-2.5">
-      <SectionLabel>Experts</SectionLabel>
-      <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
         {experts.map((e) => {
           const active = e.active ?? e.employment_status !== 'former'
           return (
@@ -468,7 +472,6 @@ function ExpertPanel({ experts, onSelectExpert }) {
             </button>
           </article>
         )})}
-      </div>
     </div>
   )
 }
@@ -565,9 +568,3 @@ function NextBestActions({ actions, sources, experts, onAsk, onCiteClick, onSele
   )
 }
 
-function domainLabel(d) {
-  return {
-    esg_sfdr: 'ESG / SFDR', fatca_tax: 'FATCA / Tax', mifid: 'MiFID II',
-    master_data: 'Master Data', settlement: 'Settlement',
-  }[d] ?? d
-}

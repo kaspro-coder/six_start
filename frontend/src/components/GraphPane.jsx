@@ -1,95 +1,115 @@
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRef, useCallback, useState, useEffect, useMemo } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
+import { Network, ZoomIn, ZoomOut, RotateCcw, Mail, X, Users, ChevronDown, Search, Check } from 'lucide-react'
 
-const BRAND_RED = '#DE3919'
-const INK       = '#1A1A1A'
-const NEUTRAL   = '#D4D0CB'
+const BRAND_RED  = '#DE3919'
+const ORANGE     = '#F97316' // the signed-in user's own department
+const RING_GRAY  = '#D9D5D0'
+const LABEL_GRAY = '#3F3F46'
 
-// ── Static graph data ──────────────────────────────────────────────────────
+// The signed-in employee's department — highlighted so the user can locate
+// themselves in the graph relative to the other departments.
+const USER_DEPARTMENT = 'Regulatory Affairs'
 
-const EXPERT_NODES = [
-  { id: 'jacob',  label: 'Jacob M.',  role: 'Master Data SME',           color: BRAND_RED,  group: 'expert' },
-  { id: 'elena',  label: 'Elena V.',  role: 'Regulatory Compliance Lead', color: '#6366F1',  group: 'expert' },
-  { id: 'thomas', label: 'Thomas B.', role: 'Reference Data Specialist',  color: '#059669',  group: 'expert' },
-  { id: 'priya',  label: 'Priya S.',  role: 'ESG Data Analyst',           color: '#0D9488',  group: 'expert' },
-  { id: 'marco',  label: 'Marco F.',  role: 'Operations Manager',         color: '#D97706',  group: 'expert' },
-]
-
-const DOMAIN_NODES = [
-  { id: 'd-sfdr',         label: 'SFDR',                  group: 'domain' },
-  { id: 'd-mifid',        label: 'MiFID II',              group: 'domain' },
-  { id: 'd-fatca',        label: 'FATCA',                 group: 'domain' },
-  { id: 'd-masterdata',   label: 'Master Data',           group: 'domain' },
-  { id: 'd-esg',          label: 'ESG Data',              group: 'domain' },
-  { id: 'd-counterparty', label: 'Counterparty',          group: 'domain' },
-  { id: 'd-taxonomy',     label: 'EU Taxonomy',           group: 'domain' },
-  { id: 'd-pai',          label: 'PAI Indicators',        group: 'domain' },
-  { id: 'd-reconcile',    label: 'Reconciliation',        group: 'domain' },
-  { id: 'd-reporting',    label: 'Regulatory Reporting',  group: 'domain' },
-  { id: 'd-bulk',         label: 'Bulk Processing',       group: 'domain' },
-  { id: 'd-vendor',       label: 'Vendor Feeds',          group: 'domain' },
-]
-
-const SOURCE_NODES = [
-  { id: 's-rulebook', label: 'Official Rulebook',   group: 'source', color: '#78716C' },
-  { id: 's-expert',   label: 'Expert Knowledge',    group: 'source', color: BRAND_RED },
-]
-
-const LINKS = [
-  // Jacob
-  { source: 'jacob', target: 'd-masterdata' },
-  { source: 'jacob', target: 'd-sfdr' },
-  { source: 'jacob', target: 'd-esg' },
-  { source: 'jacob', target: 'd-counterparty' },
-  // Elena
-  { source: 'elena', target: 'd-fatca' },
-  { source: 'elena', target: 'd-mifid' },
-  { source: 'elena', target: 'd-reporting' },
-  // Thomas
-  { source: 'thomas', target: 'd-masterdata' },
-  { source: 'thomas', target: 'd-counterparty' },
-  { source: 'thomas', target: 'd-reconcile' },
-  // Priya
-  { source: 'priya', target: 'd-sfdr' },
-  { source: 'priya', target: 'd-taxonomy' },
-  { source: 'priya', target: 'd-pai' },
-  { source: 'priya', target: 'd-esg' },
-  // Marco
-  { source: 'marco', target: 'd-bulk' },
-  { source: 'marco', target: 'd-vendor' },
-  { source: 'marco', target: 'd-reconcile' },
-  // Domains → sources
-  { source: 'd-sfdr',         target: 's-rulebook' },
-  { source: 'd-sfdr',         target: 's-expert' },
-  { source: 'd-mifid',        target: 's-rulebook' },
-  { source: 'd-fatca',        target: 's-rulebook' },
-  { source: 'd-masterdata',   target: 's-expert' },
-  { source: 'd-esg',          target: 's-expert' },
-  { source: 'd-counterparty', target: 's-expert' },
-  { source: 'd-taxonomy',     target: 's-rulebook' },
-  { source: 'd-pai',          target: 's-rulebook' },
-  { source: 'd-pai',          target: 's-expert' },
-  { source: 'd-reconcile',    target: 's-expert' },
-  { source: 'd-reporting',    target: 's-rulebook' },
-  { source: 'd-bulk',         target: 's-expert' },
-  { source: 'd-vendor',       target: 's-expert' },
-]
-
-const GRAPH_DATA = {
-  nodes: [...EXPERT_NODES, ...DOMAIN_NODES, ...SOURCE_NODES],
-  links: LINKS,
+// ── People (aligned with the Employees directory) ───────────────────────────
+const EMPLOYEES = {
+  anna:  { name: 'Anna Steiner',  role: 'Senior Settlement Specialist', initials: 'AS', email: 'anna.steiner@six-group.com' },
+  tom:   { name: 'Tom Burkhard',  role: 'Lead Post-Trade Engineer',     initials: 'TB', email: 'tom.burkhard@six-group.com' },
+  priya: { name: 'Priya Rajan',   role: 'Head of Regulatory Compliance', initials: 'PR', email: 'priya.rajan@six-group.com' },
+  marc:  { name: 'Marc Dubois',   role: 'Data Governance Lead',         initials: 'MD', email: 'marc.dubois@six-group.com' },
+  sofia: { name: 'Sofia Novak',   role: 'Senior Clearing Operations Manager', initials: 'SN', email: 'sofia.novak@six-group.com' },
+  lukas: { name: 'Lukas Weber',   role: 'Platform Architect',           initials: 'LW', email: 'lukas.weber@six-group.com' },
+  lena:  { name: 'Lena Hofer',    role: 'Operations Associate',         initials: 'LH', email: 'lena.hofer@six-group.com' },
+  david: { name: 'David Meier',   role: 'Compliance Analyst',           initials: 'DM', email: 'david.meier@six-group.com' },
+  nina:  { name: 'Nina Roth',     role: 'Client Support Specialist',    initials: 'NR', email: 'nina.roth@six-group.com' },
+  felix: { name: 'Felix Brunner', role: 'Junior Data Analyst',          initials: 'FB', email: 'felix.brunner@six-group.com' },
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+// ── Projects (inspired by real SIX initiatives) ─────────────────────────────
+// Node x/y are hand-placed per project so the links never cross (planar).
+const PROJECTS = [
+  {
+    id: 'sdx',
+    name: 'SDX — Digital Asset Tokenization',
+    progress: 68,
+    summary: 'Regulated issuance, trading and settlement of tokenized securities on SIX Digital Exchange.',
+    nodes: [
+      { id: 'digital',  label: 'Digital Assets',        critical: true, x: 0,    y: -150, team: ['lukas', 'marc', 'felix'] },
+      { id: 'clearing', label: 'Clearing & Settlement', critical: true, x: -330, y: -170, team: ['sofia', 'anna'] },
+      { id: 'api',      label: 'API & Connectivity',                    x: -390, y: 40,   team: ['lukas', 'tom'] },
+      { id: 'datagov',  label: 'Data Governance',                       x: -250, y: 40,   team: ['marc', 'felix'] },
+      { id: 'refdata',  label: 'Reference Data',                        x: 250,  y: 40,   team: ['anna', 'lena'] },
+      { id: 'rega',     label: 'Regulatory Affairs',                    x: 0,    y: 220,  team: ['priya', 'david'] },
+    ],
+    links: [
+      ['digital', 'clearing'], ['digital', 'datagov'], ['digital', 'refdata'],
+      ['clearing', 'api'], ['datagov', 'rega'], ['refdata', 'rega'],
+    ],
+  },
+  {
+    id: 't1',
+    name: 'T+1 Settlement Migration',
+    progress: 41,
+    summary: 'Shortening the securities settlement cycle to T+1 across post-trade operations.',
+    nodes: [
+      { id: 'posttrade', label: 'Post-Trade Operations', critical: true, x: 0,    y: 0,    team: ['tom', 'sofia'] },
+      { id: 'secserv',   label: 'Securities Services',   critical: true, x: -230, y: -170, team: ['anna', 'lena'] },
+      { id: 'rega',      label: 'Regulatory Affairs',                    x: 230,  y: -170, team: ['priya'] },
+      { id: 'clearing',  label: 'Clearing (SIX x-clear)',               x: 230,  y: 170,  team: ['sofia'] },
+      { id: 'core',      label: 'Core Infrastructure',                  x: -230, y: 170,  team: ['tom'] },
+      { id: 'refdata',   label: 'Reference Data',                       x: -440, y: -160, team: ['marc', 'felix'] },
+      { id: 'mktops',    label: 'Market Operations',                    x: -440, y: 250,  team: ['lukas'] },
+    ],
+    links: [
+      ['secserv', 'posttrade'], ['rega', 'posttrade'], ['posttrade', 'clearing'],
+      ['posttrade', 'core'], ['secserv', 'refdata'], ['core', 'mktops'],
+    ],
+  },
+  {
+    id: 'sfdr',
+    name: 'SFDR & ESG Data Services',
+    progress: 83,
+    summary: 'Sourcing, classifying and disclosing ESG/SFDR regulatory data for instruments.',
+    nodes: [
+      { id: 'susfin',   label: 'Sustainable Finance', critical: true, x: 0,    y: -150, team: ['priya'] },
+      { id: 'prodcov',  label: 'Product Coverage',                    x: -260, y: -210, team: ['nina', 'anna'] },
+      { id: 'client',   label: 'Client Services',                     x: -450, y: -160, team: ['nina'] },
+      { id: 'rega',     label: 'Regulatory Affairs',  critical: true, x: -220, y: 70,   team: ['priya', 'david'] },
+      { id: 'datamgmt', label: 'Data Management',                     x: 220,  y: 70,   team: ['marc', 'felix'] },
+      { id: 'refdata',  label: 'Reference Data',                      x: 410,  y: 210,  team: ['marc', 'lena'] },
+    ],
+    links: [
+      ['susfin', 'rega'], ['susfin', 'datamgmt'], ['rega', 'datamgmt'],
+      ['datamgmt', 'refdata'], ['prodcov', 'susfin'], ['client', 'prodcov'],
+    ],
+  },
+]
 
+// ── Component ───────────────────────────────────────────────────────────────
 export default function GraphPane() {
-  const fgRef                   = useRef()
-  const containerRef            = useRef()
+  const fgRef        = useRef()
+  const containerRef = useRef()
   const [dims, setDims]         = useState({ w: 800, h: 600 })
-  const [hovered, setHovered]   = useState(null)
+  const [projectId, setProjectId] = useState(PROJECTS[0].id)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [query, setQuery]       = useState('')
   const [selected, setSelected] = useState(null)
 
-  // Measure container so the canvas fills it exactly
+  const project = PROJECTS.find(p => p.id === projectId) ?? PROJECTS[0]
+
+  const graphData = useMemo(() => ({
+    nodes: project.nodes.map((n) => {
+      const isUser = n.label === USER_DEPARTMENT
+      return {
+        ...n,
+        isUser,
+        size: isUser ? 22 : n.critical ? 20 : 16,
+        fx: n.x, fy: n.y,
+      }
+    }),
+    links: project.links.map(([source, target]) => ({ source, target })),
+  }), [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -101,173 +121,280 @@ export default function GraphPane() {
     return () => ro.disconnect()
   }, [])
 
-  // Zoom to fit after mount
   useEffect(() => {
-    const t = setTimeout(() => fgRef.current?.zoomToFit(400, 60), 300)
+    const t = setTimeout(() => fgRef.current?.zoomToFit(400, 90), 280)
     return () => clearTimeout(t)
-  }, [dims])
+  }, [dims, projectId])
 
-  // Which node IDs are connected to the selected node
-  const connectedIds = useCallback((nodeId) => {
-    if (!nodeId) return new Set()
-    const ids = new Set([nodeId])
-    LINKS.forEach(l => {
-      const s = typeof l.source === 'object' ? l.source.id : l.source
-      const t = typeof l.target === 'object' ? l.target.id : l.target
-      if (s === nodeId) ids.add(t)
-      if (t === nodeId) ids.add(s)
-    })
-    return ids
+  const zoomBy = useCallback((factor) => {
+    const fg = fgRef.current
+    if (fg) fg.zoom(fg.zoom() * factor, 300)
   }, [])
+  const reset = useCallback(() => fgRef.current?.zoomToFit(400, 90), [])
 
-  const activeIds = connectedIds(selected)
+  function switchProject(id) {
+    setProjectId(id)
+    setSelected(null)
+    setMenuOpen(false)
+    setQuery('')
+  }
 
-  const paintNode = useCallback((node, ctx, globalScale) => {
-    const isExpert = node.group === 'expert'
-    const isDomain = node.group === 'domain'
-    const isSource = node.group === 'source'
+  const paintNode = useCallback((node, ctx) => {
+    const r = node.size
+    const isSel = node.id === selected
 
-    const dimmed = selected && !activeIds.has(node.id)
-    const alpha  = dimmed ? 0.2 : 1
-
-    ctx.globalAlpha = alpha
-
-    if (isExpert) {
-      const r = 18
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = node.color
-      ctx.fill()
-      // Initials
-      ctx.globalAlpha = dimmed ? 0.2 : 1
-      ctx.fillStyle = '#fff'
-      ctx.font = `bold ${Math.max(7, 10 / globalScale * 2)}px Inter, sans-serif`
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      const parts = node.label.split(' ')
-      const initials = `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`
-      ctx.fillText(initials, node.x, node.y)
-    } else if (isDomain) {
-      const r = 10
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = selected && activeIds.has(node.id) ? '#F0EDEA' : '#F0EDEA'
-      ctx.fill()
-      ctx.strokeStyle = selected && activeIds.has(node.id) ? BRAND_RED : NEUTRAL
-      ctx.lineWidth = selected && activeIds.has(node.id) ? 2 : 1
-      ctx.stroke()
-    } else if (isSource) {
-      const r = 14
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = node.color + '22'
-      ctx.fill()
-      ctx.strokeStyle = node.color
-      ctx.lineWidth = 2
-      ctx.stroke()
+    if (node.isUser) {
+      // Soft halo + solid opaque orange — "you are here".
+      ctx.beginPath(); ctx.arc(node.x, node.y, r + 10, 0, 2 * Math.PI)
+      ctx.fillStyle = 'rgba(249,115,22,0.18)'; ctx.fill()
+      ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
+      ctx.fillStyle = ORANGE; ctx.fill()
+      ctx.lineWidth = 2; ctx.strokeStyle = '#C2410C'; ctx.stroke()
+    } else if (node.critical) {
+      ctx.beginPath(); ctx.arc(node.x, node.y, r + 10, 0, 2 * Math.PI)
+      ctx.fillStyle = 'rgba(222,57,25,0.10)'; ctx.fill()
+      ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
+      ctx.fillStyle = 'rgba(222,57,25,0.16)'; ctx.fill()
+      ctx.lineWidth = 2.5; ctx.strokeStyle = BRAND_RED; ctx.stroke()
+    } else {
+      ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
+      ctx.fillStyle = '#FFFFFF'; ctx.fill()
+      ctx.lineWidth = 1.5; ctx.strokeStyle = RING_GRAY; ctx.stroke()
     }
 
-    // Label below node
-    const labelSize = isExpert ? 9 : isDomain ? 8 : 8
-    ctx.globalAlpha = dimmed ? 0.15 : 0.85
-    ctx.fillStyle = INK
-    ctx.font = `${isExpert ? '600' : '500'} ${labelSize}px Inter, sans-serif`
+    if (isSel) {
+      ctx.beginPath(); ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI)
+      ctx.lineWidth = 2; ctx.strokeStyle = node.isUser ? '#C2410C' : BRAND_RED; ctx.stroke()
+    }
+
+    ctx.fillStyle = node.isUser ? '#C2410C' : isSel ? BRAND_RED : LABEL_GRAY
+    ctx.font = `${node.isUser || isSel ? '700' : '600'} 13px Inter, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
-    const yOff = isExpert ? 22 : isDomain ? 13 : 18
-    ctx.fillText(node.label, node.x, node.y + yOff)
+    ctx.fillText(node.label, node.x, node.y + r + 9)
+  }, [selected])
 
-    ctx.globalAlpha = 1
-  }, [selected, activeIds])
+  // Selected node + team, retained during slide-out.
+  const selNode = project.nodes.find(n => n.id === selected) || null
+  const lastRef = useRef(null)
+  if (selNode) lastRef.current = { node: selNode, team: selNode.team ?? [] }
+  const shown = selNode ? { node: selNode, team: selNode.team ?? [] } : lastRef.current
+  const open = !!selNode
 
-  const linkColor = useCallback((link) => {
-    if (!selected) return NEUTRAL + '99'
-    const s = typeof link.source === 'object' ? link.source.id : link.source
-    const t = typeof link.target === 'object' ? link.target.id : link.target
-    return (activeIds.has(s) && activeIds.has(t)) ? BRAND_RED + 'CC' : NEUTRAL + '22'
-  }, [selected, activeIds])
-
-  const linkWidth = useCallback((link) => {
-    if (!selected) return 1
-    const s = typeof link.source === 'object' ? link.source.id : link.source
-    const t = typeof link.target === 'object' ? link.target.id : link.target
-    return (activeIds.has(s) && activeIds.has(t)) ? 2 : 0.5
-  }, [selected, activeIds])
+  const filteredProjects = PROJECTS.filter(p =>
+    p.name.toLowerCase().includes(query.toLowerCase())
+  )
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Header */}
-      <div className="px-6 pt-6 pb-3 shrink-0 border-b border-neutral-100 flex items-end justify-between">
-        <div>
-          <h1 className="font-display font-bold text-ink text-base">Knowledge Graph</h1>
-          <p className="text-xs text-neutral-400 mt-0.5">Click a node to highlight its connections</p>
-        </div>
-        {selected && (
-          <button
-            onClick={() => setSelected(null)}
-            className="text-[10px] font-semibold text-neutral-400 hover:text-ink transition-colors"
-          >
-            Clear selection
-          </button>
-        )}
-      </div>
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-canvas px-5 py-5">
+      <div className="flex flex-1 min-h-0">
+        {/* ── Graph column ──────────────────────────────────────────── */}
+        <div className="flex flex-col flex-1 min-w-0">
+          <div className="flex flex-col flex-1 min-h-0 rounded-2xl border border-neutral-200/80 bg-white overflow-hidden shadow-card">
+            {/* Header: project title (dropdown) + progress + zoom */}
+            <div className="relative px-5 py-3.5 shrink-0 border-b border-neutral-100">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen(o => !o)}
+                    className="group flex items-center gap-2 text-left"
+                  >
+                    <Network size={15} className="text-neutral-400 shrink-0" />
+                    <span className="font-display font-bold text-ink text-sm truncate">{project.name}</span>
+                    <ChevronDown size={15} className={`shrink-0 text-neutral-400 transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  <p className="mt-0.5 text-[11px] text-neutral-400 truncate">{project.summary}</p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <IconBtn title="Zoom in"  onClick={() => zoomBy(1.3)}><ZoomIn size={15} /></IconBtn>
+                  <IconBtn title="Zoom out" onClick={() => zoomBy(0.77)}><ZoomOut size={15} /></IconBtn>
+                  <IconBtn title="Reset view" onClick={reset}><RotateCcw size={14} /></IconBtn>
+                </div>
+              </div>
 
-      {/* Legend */}
-      <div className="flex items-center gap-4 px-6 py-2 shrink-0 border-b border-neutral-100">
-        <LegendItem color={BRAND_RED}  filled label="Expert" />
-        <LegendItem color={NEUTRAL}    border label="Knowledge domain" />
-        <LegendItem color="#78716C"    border label="Source type" />
-      </div>
+              {/* Progress bar */}
+              <div className="mt-2.5 flex items-center gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 shrink-0">Progress</span>
+                <div className="h-1.5 flex-1 rounded-full bg-neutral-100 overflow-hidden">
+                  <div className="h-full rounded-full bg-six transition-all" style={{ width: `${project.progress}%` }} />
+                </div>
+                <span className="text-[11px] font-bold text-ink tabular-nums shrink-0">{project.progress}%</span>
+              </div>
 
-      {/* Tooltip */}
-      {hovered && (
-        <div className="absolute z-10 pointer-events-none left-1/2 -translate-x-1/2 mt-2">
-          <div className="bg-white border border-neutral-200/80 shadow-elevated rounded-xl px-3 py-2 text-xs">
-            <p className="font-semibold text-ink">{hovered.label}</p>
-            {hovered.role && <p className="text-neutral-400">{hovered.role}</p>}
+              {/* Project dropdown */}
+              {menuOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                  <div className="absolute left-5 top-14 z-30 w-[340px] rounded-xl border border-neutral-200 bg-white shadow-elevated overflow-hidden">
+                    <div className="relative border-b border-neutral-100">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+                      <input
+                        autoFocus
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                        placeholder="Search a project…"
+                        className="w-full bg-transparent pl-9 pr-3 py-2.5 text-sm outline-none"
+                      />
+                    </div>
+                    <div className="max-h-64 overflow-y-auto py-1">
+                      {filteredProjects.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => switchProject(p.id)}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-neutral-50 ${
+                            p.id === projectId ? 'bg-six-light/50' : ''
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-ink truncate">{p.name}</p>
+                            <p className="text-[10px] text-neutral-400 truncate">{p.progress}% · {p.nodes.length} departments</p>
+                          </div>
+                          {p.id === projectId && <Check size={14} className="text-six shrink-0" />}
+                        </button>
+                      ))}
+                      {filteredProjects.length === 0 && (
+                        <p className="px-3 py-4 text-center text-xs text-neutral-400">No project found.</p>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Canvas */}
+            <div ref={containerRef} className="relative flex-1 min-h-0">
+              <ForceGraph2D
+                key={projectId}
+                ref={fgRef}
+                graphData={graphData}
+                width={dims.w}
+                height={dims.h}
+                nodeCanvasObject={paintNode}
+                nodeCanvasObjectMode={() => 'replace'}
+                nodeRelSize={6}
+                nodeVal={n => (n.size / 6) ** 2}
+                linkColor={() => 'rgba(180,176,170,0.55)'}
+                linkWidth={1.2}
+                enableNodeDrag={false}
+                cooldownTicks={0}
+                backgroundColor="#FFFFFF"
+                onNodeClick={node => setSelected(s => (s === node.id ? null : node.id))}
+                onBackgroundClick={() => setSelected(null)}
+              />
+
+              {/* Legend — top-right, below the progress bar */}
+              <div className="absolute top-3 right-3 rounded-xl border border-neutral-200 bg-white/90 px-3 py-2 space-y-1.5 shadow-sm backdrop-blur-sm">
+                <LegendDot variant="user" label="Your department" />
+                <LegendDot variant="critical" label="Critical Domain" />
+                <LegendDot variant="active" label="Active Domain" />
+                <LegendLine label="Knowledge Link" />
+              </div>
+
+              <div className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2">
+                <span className="rounded-full border border-neutral-200 bg-white/85 px-4 py-1.5 text-[11px] text-neutral-400">
+                  Click a department to see who works on the project
+                </span>
+              </div>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Canvas */}
-      <div ref={containerRef} className="flex-1 min-h-0 bg-canvas">
-        <ForceGraph2D
-          ref={fgRef}
-          graphData={GRAPH_DATA}
-          width={dims.w}
-          height={dims.h}
-          nodeCanvasObject={paintNode}
-          nodeCanvasObjectMode={() => 'replace'}
-          nodeRelSize={6}
-          nodeVal={n => n.group === 'expert' ? 4 : n.group === 'source' ? 2.5 : 1.5}
-          linkColor={linkColor}
-          linkWidth={linkWidth}
-          linkDirectionalParticles={selected ? 2 : 0}
-          linkDirectionalParticleColor={() => BRAND_RED}
-          linkDirectionalParticleWidth={2}
-          onNodeHover={node => setHovered(node || null)}
-          onNodeClick={node => setSelected(s => s === node.id ? null : node.id)}
-          cooldownTicks={120}
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          backgroundColor="#F7F5F3"
-        />
+        {/* ── Project-team panel (slides in from the right) ─────────── */}
+        <div
+          className="shrink-0 overflow-hidden transition-[width] duration-300 ease-out"
+          style={{ width: open ? 360 : 0 }}
+        >
+          <div className="w-[360px] h-full pl-4">
+            <div className="h-full flex flex-col rounded-2xl border border-neutral-200/80 bg-white shadow-card overflow-hidden">
+              {shown && (
+                <>
+                  <div className="flex items-start gap-2 px-4 py-3.5 border-b border-neutral-100 shrink-0">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">Project team</p>
+                      <p className="font-display font-bold text-ink text-sm truncate">{shown.node.label}</p>
+                      <p className="flex items-center gap-1 text-[11px] text-neutral-400 mt-0.5">
+                        <Users size={11} />
+                        {shown.team.length} {shown.team.length > 1 ? 'people' : 'person'} on this project
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setSelected(null)}
+                      className="grid h-6 w-6 place-items-center rounded-md hover:bg-neutral-100 text-neutral-400 hover:text-ink transition-colors shrink-0"
+                      type="button"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                    {shown.team.map(id => <TeamCard key={id} emp={EMPLOYEES[id]} />)}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
 
-function LegendItem({ color, filled, border, label }) {
+function TeamCard({ emp }) {
+  if (!emp) return null
+  return (
+    <div className="flex items-start gap-3 rounded-xl border border-neutral-200/70 bg-white p-3 shadow-card">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-neutral-100 text-sm font-bold text-neutral-500">
+        {emp.initials}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold text-ink truncate">{emp.name}</p>
+        <p className="text-[11px] text-neutral-500 truncate">{emp.role}</p>
+        <a
+          href={`mailto:${emp.email}`}
+          className="mt-1 inline-flex items-center gap-1 text-[10px] text-neutral-400 hover:text-six transition-colors max-w-full"
+        >
+          <Mail size={10} className="shrink-0" />
+          <span className="truncate">{emp.email}</span>
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function IconBtn({ title, onClick, children }) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      type="button"
+      className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-ink"
+    >
+      {children}
+    </button>
+  )
+}
+
+function LegendDot({ variant, label }) {
+  const style =
+    variant === 'user'
+      ? { backgroundColor: ORANGE, border: '2px solid #C2410C' }
+      : variant === 'critical'
+      ? { backgroundColor: 'rgba(222,57,25,0.16)', border: `2px solid ${BRAND_RED}` }
+      : { backgroundColor: '#FFFFFF', border: `1.5px solid ${RING_GRAY}` }
   return (
     <div className="flex items-center gap-1.5">
-      <div
-        className="h-3 w-3 rounded-full shrink-0"
-        style={{
-          backgroundColor: filled ? color : color + '22',
-          border: border ? `1.5px solid ${color}` : 'none',
-        }}
-      />
-      <span className="text-[10px] text-neutral-500 font-medium">{label}</span>
+      <span className="h-3 w-3 rounded-full shrink-0" style={style} />
+      <span className="text-xs text-neutral-500 font-medium">{label}</span>
+    </div>
+  )
+}
+
+function LegendLine({ label }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="h-px w-5 shrink-0" style={{ backgroundColor: RING_GRAY }} />
+      <span className="text-xs text-neutral-500 font-medium">{label}</span>
     </div>
   )
 }

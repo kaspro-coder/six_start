@@ -5,6 +5,7 @@ import SessionsPane from './components/SessionsPane.jsx'
 import LibraryPane from './components/LibraryPane.jsx'
 import ExpertsPane from './components/ExpertsPane.jsx'
 import GraphPane from './components/GraphPane.jsx'
+import ProfilePane from './components/ProfilePane.jsx'
 import FloatingWindow from './components/FloatingWindow.jsx'
 import ExpertInbox from './components/escalation/ExpertInbox.jsx'
 import ContactExpertModal from './components/ContactExpertModal.jsx'
@@ -55,6 +56,12 @@ export default function App() {
           if (activeTab === 'library')  return <LibraryPane />
           if (activeTab === 'experts')  return <ExpertsPane />
           if (activeTab === 'graph')    return <GraphPane />
+          if (activeTab === 'profile')  return (
+            <ProfilePane
+              sessions={sessions}
+              onOpenDiscussion={s => { loadSession(s.id); setActiveTab('chat') }}
+            />
+          )
           if (activeTab === 'inbox')    return (
             <ExpertInbox
               refreshSignal={inboxRefresh}
