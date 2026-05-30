@@ -16,6 +16,12 @@ const USER_PROFILE = {
 // Data Opening screen, so that's our default current page/workflow.
 const DEFAULT_PAGE = '/master-data/opening'
 
+let activeScreenContext = ''
+
+export function setActiveScreenContext(value = '') {
+  activeScreenContext = String(value || '').trim().slice(0, 1200)
+}
+
 /**
  * Collect the structured user context to send with a question.
  * @param {object} opts
@@ -23,7 +29,7 @@ const DEFAULT_PAGE = '/master-data/opening'
  * @param {string}   [opts.currentPage]   - override the inferred page
  * @returns {object} UserContext payload for /api/answer
  */
-export function collectUserContext({ recentQueries = [], currentPage } = {}) {
+export function collectUserContext({ recentQueries = [], currentPage, screenContext } = {}) {
   let selectedText = ''
   try {
     selectedText = (window.getSelection?.()?.toString() ?? '').trim().slice(0, 400)
@@ -35,6 +41,7 @@ export function collectUserContext({ recentQueries = [], currentPage } = {}) {
     ...USER_PROFILE,
     current_page: currentPage || DEFAULT_PAGE,
     selected_text: selectedText || undefined,
+    screen_context: screenContext || activeScreenContext || undefined,
     recent_queries: recentQueries.slice(-5),
   }
 }

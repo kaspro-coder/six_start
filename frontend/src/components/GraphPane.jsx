@@ -144,7 +144,9 @@ export default function GraphPane() {
       ctx.font = `bold ${Math.max(7, 10 / globalScale * 2)}px Inter, sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(node.label.split(' ')[0][0] + node.label.split(' ')[1]?.[0] ?? '', node.x, node.y)
+      const parts = node.label.split(' ')
+      const initials = `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`
+      ctx.fillText(initials, node.x, node.y)
     } else if (isDomain) {
       const r = 10
       ctx.beginPath()

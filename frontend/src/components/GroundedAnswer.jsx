@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   ShieldCheck, Landmark, UserCheck, FileText, User, ArrowUpRight, ArrowRight,
   ClipboardList, ScrollText, MessageCircle, StickyNote, AlertTriangle, Sparkles,
@@ -50,16 +51,53 @@ function relTime(iso) {
 }
 
 // Inline [n] citations — clickable, opens the doc viewer
+function citationClasses(source) {
+  const type = source?.source_type
+  if (type === 'official_rulebook' || type === 'document' || type === 'policy') {
+    return 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+  }
+  if (type === 'expert_resolution' || type === 'resolved_question') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+  }
+  if (type === 'tacit_expert_knowledge' || type === 'expert_note' || type === 'runbook') {
+    return 'border-six/25 bg-six-light text-six hover:bg-six hover:text-white'
+  }
+  return 'border-neutral-200 bg-neutral-50 text-neutral-600 hover:bg-neutral-100'
+}
+
 function Cite({ n, source, onClick }) {
+  const meta = sourceMeta(source?.source_type)
+  const freshness = relTime(source?.updated_at) || source?.page_or_line || 'freshness unavailable'
   return (
-    <button
-      onClick={() => source && onClick?.(source)}
-      disabled={!source}
-      className="ml-0.5 align-super font-mono text-[10px] font-semibold text-six hover:underline active:opacity-70 disabled:cursor-default disabled:opacity-60"
-      type="button"
-    >
-      [{n}]
-    </button>
+    <Tooltip.Provider delayDuration={120}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            onClick={() => source && onClick?.(source)}
+            disabled={!source}
+            className={`ml-0.5 inline-flex align-super rounded border px-1 font-mono text-[10px] font-bold transition-colors active:opacity-70 disabled:cursor-default disabled:opacity-60 ${citationClasses(source)}`}
+            type="button"
+          >
+            [{n}]
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side="top"
+            align="center"
+            className="z-[120] max-w-xs rounded-xl border border-neutral-800 bg-ink px-3 py-2 text-left text-[11px] leading-relaxed text-white shadow-elevated"
+          >
+            <p className="font-bold">{meta.label}</p>
+            <p className="mt-0.5 text-neutral-300">Freshness: {freshness}</p>
+            {source?.title && <p className="mt-1 font-semibold text-white">{source.title}</p>}
+            {source?.relevant_quote && (
+              <p className="mt-1 text-neutral-300">"{source.relevant_quote.slice(0, 180)}{source.relevant_quote.length > 180 ? '...' : ''}"</p>
+            )}
+            <Tooltip.Arrow className="fill-ink" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
   )
 }
 function InlineCitations({ text, sources, onCiteClick }) {

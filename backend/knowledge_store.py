@@ -82,6 +82,10 @@ EXPERTS: list[dict[str, Any]] = [
         "domains": ["master_data", "mifid"],
         "expertise_tags": ["instrument coverage", "onboarding", "isin",
                             "master data opening", "extension assessment"],
+        "keywords": ["master data", "mutations", "account opening", "isin",
+                     "coverage", "instrument onboarding", "reference data"],
+        "intents": ["explain_process", "answer_question", "find_expert"],
+        "chroma_clusters": ["master_data", "mifid_reference_data"],
         "knowledge_score": 0.94,
         "resolved_count": 37,
         "status": "available",
@@ -97,6 +101,10 @@ EXPERTS: list[dict[str, Any]] = [
         "domains": ["esg_sfdr", "master_data"],
         "expertise_tags": ["sfdr", "esg sub-classification", "pai indicators",
                             "article 8", "article 9", "regulatory based"],
+        "keywords": ["sfdr", "esg", "pai", "article 8", "article 9",
+                     "regulatory based", "ghg", "sustainability"],
+        "intents": ["explain_process", "answer_question", "find_expert"],
+        "chroma_clusters": ["esg_sfdr", "master_data"],
         "knowledge_score": 0.91,
         "resolved_count": 24,
         "status": "available",
@@ -112,6 +120,10 @@ EXPERTS: list[dict[str, Any]] = [
         "domains": ["settlement"],
         "expertise_tags": ["swift", "settlement exception", "reconciliation",
                             "post-trade", "retry window", "incident handling"],
+        "keywords": ["swift", "settlement", "market operations",
+                     "post-trade", "reconciliation", "failed trade"],
+        "intents": ["resolve_incident", "find_expert"],
+        "chroma_clusters": ["settlement", "market_operations"],
         "knowledge_score": 0.89,
         "resolved_count": 31,
         "status": "available",
@@ -127,6 +139,10 @@ EXPERTS: list[dict[str, Any]] = [
         "domains": ["fatca_tax"],
         "expertise_tags": ["fatca", "withholding", "us person", "tax navigator",
                             "chapter 4", "qi"],
+        "keywords": ["fatca", "tax", "withholding", "us person",
+                     "chapter 4", "crs", "qi"],
+        "intents": ["answer_question", "find_expert"],
+        "chroma_clusters": ["fatca_tax"],
         "knowledge_score": 0.87,
         "resolved_count": 19,
         "status": "busy",
@@ -434,6 +450,67 @@ def route_experts(
     return ranked[:limit]
 
 
+def match_experts_for_query(
+    query: str,
+    intent: str | None = None,
+    domains: list[str] | None = None,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    """Fast explainable expert suggestions for live routing chips.
+
+    Uses explicit expert keyword/intents/chroma_clusters mappings plus the
+    normal domain detector. This is deliberately lightweight so the frontend
+    can call it while the user types.
+    """
+    low = (query or "").lower()
+    q_tokens = _tokens(query)
+    target_domains = set(domains or detect_domains(query))
+    ranked: list[dict[str, Any]] = []
+
+    for exp in EXPERTS:
+        keywords = [*exp.get("keywords", []), *exp.get("expertise_tags", [])]
+        keyword_hits = [
+            kw for kw in keywords
+            if kw.lower() in low or bool(_tokens(kw) & q_tokens)
+        ]
+        domain_hits = target_domains & set(exp.get("domains", []))
+        cluster_hits = target_domains & set(exp.get("chroma_clusters", []))
+        intent_hit = bool(intent and intent in exp.get("intents", []))
+
+        score = (
+            2.5 * len(dict.fromkeys(keyword_hits))
+            + 3.0 * len(domain_hits)
+            + 2.0 * len(cluster_hits)
+            + (1.5 if intent_hit else 0.0)
+            + exp.get("knowledge_score", 0.0)
+        )
+        if score <= exp.get("knowledge_score", 0.0):
+            continue
+
+        if keyword_hits:
+            reason = f"Matches domain: {keyword_hits[0]}"
+        elif domain_hits:
+            reason = f"Matches domain: {sorted(domain_hits)[0]}"
+        elif cluster_hits:
+            reason = f"Matches knowledge cluster: {sorted(cluster_hits)[0]}"
+        elif intent_hit:
+            reason = f"Matches intent: {intent.replace('_', ' ')}"
+        else:
+            reason = "Closest responsible SME"
+
+        ranked.append({
+            **exp,
+            "match_score": round(score, 3),
+            "matched_keywords": list(dict.fromkeys(keyword_hits))[:5],
+            "matched_domains": sorted(domain_hits | cluster_hits),
+            "matched_intent": intent if intent_hit else None,
+            "reason": reason,
+        })
+
+    ranked.sort(key=lambda e: e["match_score"], reverse=True)
+    return ranked[:limit]
+
+
 def _capitalize(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
@@ -546,5 +623,74 @@ def resolve_request(request_id: str, resolution: dict[str, Any]) -> dict[str, An
             persisted = load_persisted_knowledge()
             persisted.insert(0, knowledge_item)
             _write_json(PERSISTED_FILE, persisted)
+            _add_resolution_to_chroma(knowledge_item, expert, now)
 
     return {"request": request, "knowledge_item": knowledge_item}
+
+
+def _add_resolution_to_chroma(
+    knowledge_item: dict[str, Any],
+    expert: dict[str, Any],
+    timestamp: str,
+) -> None:
+    """Embed a resolved expert answer into the live Chroma vector store.
+
+    Persistence to JSON remains the deterministic demo source. Chroma ingestion
+    is best-effort so resolving a request never fails just because embeddings
+    or the local vector store are unavailable.
+    """
+    try:
+        from langchain_core.documents import Document
+    except ImportError:
+        try:
+            from langchain.schema import Document
+        except ImportError:
+            return
+
+    try:
+        try:
+            from langchain_chroma import Chroma
+        except ImportError:
+            from langchain_community.vectorstores import Chroma
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+        except ImportError:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+        from retrieval_engine import CHROMA_DB_DIR, EMBEDDING_MODEL_KWARGS, EMBEDDING_MODEL_NAME
+    except Exception:
+        return
+
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs=EMBEDDING_MODEL_KWARGS,
+        )
+        vector_store = Chroma(
+            persist_directory=CHROMA_DB_DIR,
+            embedding_function=embeddings,
+        )
+        author = expert.get("expert_name", "Unknown expert")
+        text = (
+            f"{knowledge_item.get('title', 'Expert resolution')}\n\n"
+            f"{knowledge_item.get('summary', '')}\n\n"
+            f"{knowledge_item.get('content', '')}"
+        ).strip()
+        vector_store.add_documents([
+            Document(
+                page_content=text,
+                metadata={
+                    "type": "expert_resolution",
+                    "source_type": "expert_resolution",
+                    "author": author,
+                    "timestamp": timestamp,
+                    "updated_at": timestamp,
+                    "source": knowledge_item.get("id"),
+                    "title": knowledge_item.get("title"),
+                    "originating_request_id": knowledge_item.get("originating_request_id"),
+                },
+            )
+        ])
+        if hasattr(vector_store, "persist"):
+            vector_store.persist()
+    except Exception:
+        return

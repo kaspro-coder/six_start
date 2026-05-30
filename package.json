@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "scripts": {
+    "electron:dev": "npm --prefix frontend run electron:dev",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build"
+  }
+}

@@ -62,12 +62,18 @@ def collect_user_context(payload: dict[str, Any] | None) -> dict[str, Any]:
         "current_workflow": p.get("current_workflow")
         or _workflow_from_page(page),
         "selected_text": p.get("selected_text"),
+        "screen_context": p.get("screen_context"),
         "active_document_id": p.get("active_document_id"),
         "recent_queries": p.get("recent_queries", [])[:5],
     }
     # Domain the user currently sits in, inferred from page + workflow + selection.
     ctx_blob = " ".join(
-        str(x) for x in (page, context["current_workflow"], context["selected_text"])
+        str(x) for x in (
+            page,
+            context["current_workflow"],
+            context["selected_text"],
+            context["screen_context"],
+        )
         if x
     )
     context["context_domains"] = ks.detect_domains(ctx_blob)
@@ -119,12 +125,20 @@ def plan_query(query: str, context: dict[str, Any] | None = None) -> dict[str, A
     if intent == "summarize_document" and ctx.get("current_workflow"):
         rewritten = f"{query.strip()} (context: {ctx['current_workflow']})"
 
+    suggested_experts = ks.match_experts_for_query(
+        query,
+        intent=intent,
+        domains=domains,
+        limit=3,
+    )
+
     return {
         "original_query": query,
         "rewritten_query": rewritten,
         "detected_intent": intent,
         "required_context": list(dict.fromkeys(required_context)),
         "target_domains": domains,
+        "suggested_experts": suggested_experts,
     }
 
 

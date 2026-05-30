@@ -20,7 +20,7 @@ except ImportError:
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_MODEL_KWARGS = {"local_files_only": False}
-CHROMA_DB_DIR = "./chroma_db"
+CHROMA_DB_DIR = str(Path(__file__).resolve().parent / "chroma_db")
 
 
 def load_documents(source_dir):
@@ -76,6 +76,6 @@ def build_vector_store(documents):
 
 
 if __name__ == "__main__":
-    loaded_docs = load_documents("SIX_Git_Sources")
+    loaded_docs = load_documents(Path(__file__).resolve().parent / "SIX_Git_Sources")
     build_vector_store(loaded_docs)
     print(f"ChromaDB vector store saved successfully to {CHROMA_DB_DIR}.")

@@ -78,7 +78,7 @@ export default function App() {
 
 function BackgroundShell({ children }) {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="sixsens-background-shell min-h-screen flex flex-col">
       <header className="sticky top-0 z-10 flex items-center gap-3 px-6 py-3 bg-white border-b border-neutral-200/80">
         <div className="flex items-center gap-2.5">
           <span className="font-display text-base font-extrabold tracking-tight text-ink">SIX</span>

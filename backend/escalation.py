@@ -18,6 +18,7 @@ import knowledge_store as ks
 
 # A chunk needs at least this score to count as "solid" support.
 SOLID_SCORE = 4.0
+STRICT_CONFIDENCE_THRESHOLD = 0.60
 
 
 def score_confidence(
@@ -49,7 +50,15 @@ def score_confidence(
         limitations.append("No verified source directly backs this answer.")
 
     # Decide the level.
-    if len(verified) >= 2 and len(solid) >= 1:
+    score_pct = _confidence_score_pct(ranked, verified, solid)
+
+    if score_pct < STRICT_CONFIDENCE_THRESHOLD:
+        level = "low"
+        reason = (
+            "Below the 60% evidence threshold; no documented solution is "
+            "strong enough to generate safely."
+        )
+    elif len(verified) >= 2 and len(solid) >= 1:
         level = "high"
         reason = (
             f"Backed by {len(verified)} verified sources"
@@ -73,7 +82,30 @@ def score_confidence(
         level = "low"
         reason = "No verified source directly matches this issue."
 
-    return {"level": level, "reason": reason, "limitations": limitations}
+    return {
+        "level": level,
+        "reason": reason,
+        "limitations": limitations,
+        "score": round(score_pct, 3),
+        "threshold": STRICT_CONFIDENCE_THRESHOLD,
+        "below_threshold": score_pct < STRICT_CONFIDENCE_THRESHOLD,
+    }
+
+
+def _confidence_score_pct(
+    ranked: list[dict[str, Any]],
+    verified: list[dict[str, Any]],
+    solid: list[dict[str, Any]],
+) -> float:
+    if not ranked:
+        return 0.0
+
+    top = max(0.0, float(ranked[0].get("relevance_score", 0.0)))
+    top_component = min(top / 8.0, 1.0) * 0.45
+    verified_component = min(len(verified) / 2.0, 1.0) * 0.35
+    solid_component = min(len(solid) / 2.0, 1.0) * 0.20
+    stale_penalty = 0.15 if ranked[0].get("trust_level") == "stale" else 0.0
+    return max(0.0, min(1.0, top_component + verified_component + solid_component - stale_penalty))
 
 
 def should_escalate(
@@ -88,6 +120,8 @@ def should_escalate(
 
     if confidence["level"] == "low":
         reasons.append("the assistant has low confidence in a grounded answer")
+    if confidence.get("below_threshold"):
+        reasons.append("evidence is below the hard 60% confidence threshold")
     if not any(c.get("trust_level") == "verified" for c in ranked):
         reasons.append("no verified source covers this")
     if ranked and all(c.get("trust_level") == "stale" for c in ranked[:2]):

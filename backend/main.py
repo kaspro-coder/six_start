@@ -136,6 +136,8 @@ class GroundedAnswerResponse(BaseModel):
     steps: list[AnswerStep] = Field(default_factory=list)
     confidence: str
     confidence_reason: str
+    confidence_score: float | None = None
+    confidence_threshold: float | None = None
     context_used: dict[str, Any] = Field(default_factory=dict)
     query_plan: dict[str, Any] = Field(default_factory=dict)
     document_citations: list[dict[str, Any]] = Field(default_factory=list)
@@ -169,6 +171,10 @@ class ResolutionPayload(BaseModel):
     confidence: str = "medium"
     reusable_knowledge_title: str | None = None
     make_reusable: bool = True
+
+
+class ExpertMatchRequest(BaseModel):
+    query: str
 
 
 # ── rrweb event introspection ────────────────────────────────────────────
@@ -549,7 +555,9 @@ infrastructure). You answer a compliance officer's question using ONLY the \
 retrieved knowledge chunks provided, each labelled [n].
 
 Rules:
-  1. Ground every claim in the chunks and cite the supporting [n] indices. \
+  1. Ground every claim in the chunks and cite the supporting [n] indices \
+inline using bracketed numbers like [1], [2], corresponding exactly to the \
+provided context chunks. \
 Never invent regulations, ISINs, thresholds, field names, or experts.
   2. If the chunks are thin or only partially cover the question, say so plainly \
 in `answer` and give the best-supported partial guidance — never bluff.
@@ -605,6 +613,20 @@ def _compose_grounded(question: str, ranked: list[dict[str, Any]],
         )
     excerpt = " ".join((top.get("content") or "").split())[:280]
     return _GroundedDraft(answer=f"{excerpt} [1]", steps=[])
+
+
+def _ensure_inline_citations(
+    draft: "_GroundedDraft",
+    ranked: list[dict[str, Any]],
+) -> "_GroundedDraft":
+    if not ranked:
+        return draft
+    if "[" not in draft.answer:
+        draft.answer = f"{draft.answer.rstrip()} [1]"
+    for step in draft.steps:
+        if not step.citations:
+            step.citations = [1]
+    return draft
 
 
 def _choose_display_format(plan: dict[str, Any], escalate: bool) -> str:
@@ -714,19 +736,33 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 
     confidence = esc.score_confidence(ranked, plan)
     esc_decision = esc.should_escalate(confidence, ranked, plan)
-    escalate = esc_decision["escalate"]
+    below_threshold = bool(confidence.get("below_threshold"))
+    escalate = esc_decision["escalate"] or below_threshold
     escalation_block = esc.build_escalation(req.question, plan, ranked, context) if escalate else {}
     routed_experts = escalation_block.get("experts", [])
     display_format = _choose_display_format(plan, escalate)
 
     engine = "grounded"
     detail = None
-    if ranked:
+    if below_threshold:
+        engine = "escalation_needed"
+        draft = _GroundedDraft(
+            answer=(
+                "No documented solution found for this specific context. "
+                "Let's ask the right person."
+            ),
+            steps=[],
+        )
+        display_format = "escalation_needed"
+    elif ranked:
         try:
-            draft = _generate_grounded(req.question, ranked)
+            draft = _ensure_inline_citations(_generate_grounded(req.question, ranked), ranked)
             engine = "rag"
         except Exception as exc:  # noqa: BLE001
-            draft = _compose_grounded(req.question, ranked, display_format)
+            draft = _ensure_inline_citations(
+                _compose_grounded(req.question, ranked, display_format),
+                ranked,
+            )
             detail = f"LLM unavailable, deterministic compose: {exc}"
     else:
         draft = _compose_grounded(req.question, ranked, display_format)
@@ -742,6 +778,7 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         "current_page": context.get("current_page"),
         "current_workflow": context.get("current_workflow"),
         "selected_text_used": bool(context.get("selected_text")),
+        "screen_context_used": bool(context.get("screen_context")),
         "target_domains": plan.get("target_domains", []),
         "retrieved_source_count": len(ranked),
     }
@@ -759,6 +796,8 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         answer=draft.answer, display_format=display_format, steps=draft.steps,
         confidence=confidence["level"], confidence_reason=confidence["reason"],
         context_used=context_used, query_plan=plan,
+        confidence_score=confidence.get("score"),
+        confidence_threshold=confidence.get("threshold"),
         document_citations=document_citations, expert_citations=expert_citations,
         source_trace=source_trace, limitations=confidence["limitations"],
         next_best_actions=next_actions, escalation=escalation_out, detail=detail,
@@ -769,6 +808,27 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 def list_experts() -> dict[str, Any]:
     import knowledge_store as ks
     return {"experts": ks.EXPERTS}
+
+
+@app.post("/api/expert-matches")
+def expert_matches(payload: ExpertMatchRequest) -> dict[str, Any]:
+    import context_engine as ce
+    import knowledge_store as ks
+
+    context = ce.collect_user_context({})
+    plan = ce.plan_query(payload.query, context)
+    experts = ks.match_experts_for_query(
+        payload.query,
+        intent=plan.get("detected_intent"),
+        domains=plan.get("target_domains", []),
+        limit=4,
+    )
+    return {
+        "query": payload.query,
+        "intent": plan.get("detected_intent"),
+        "target_domains": plan.get("target_domains", []),
+        "experts": experts,
+    }
 
 
 @app.get("/api/knowledge")

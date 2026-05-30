@@ -117,6 +117,10 @@ export function listExperts() {
   return getJson('/api/experts')
 }
 
+export function findExpertMatches(query) {
+  return postJson('/api/expert-matches', { query })
+}
+
 export function listKnowledge() {
   return getJson('/api/knowledge')
 }

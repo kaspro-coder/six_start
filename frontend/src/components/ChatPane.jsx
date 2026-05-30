@@ -6,8 +6,8 @@ import {
   Send, BookOpen, ArrowUpRight, Landmark, UserCheck,
   FileText, ShieldCheck, Check, Copy, Zap, ClipboardList, User,
 } from 'lucide-react'
-import { askAgent, askSixthSense, getGroundedAnswer } from '../lib/api.js'
-import { collectUserContext } from '../lib/context.js'
+import { askAgent, askSixthSense, findExpertMatches, getGroundedAnswer } from '../lib/api.js'
+import { collectUserContext, setActiveScreenContext } from '../lib/context.js'
 
 const DEMO_ANSWER = {
   title: 'Verify SFDR data for Alpen Privatbank',
@@ -60,6 +60,8 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   const [activeCite, setActiveCite] = useState(null)
   const [splitPct,   setSplitPct]   = useState(50)
   const [escalation, setEscalation] = useState(null)
+  const [routingMatches, setRoutingMatches] = useState([])
+  const screenContextRef = useRef('')
   const scrollRef  = useRef(null)
   const dividerRef = useRef(null)
   const isEmpty = messages.length === 1 && !thinking
@@ -94,6 +96,47 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
     onMessagesChange?.(messages)
   }, [messages])
 
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.electronAPI : null
+    if (!api?.onSummon) return undefined
+
+    return api.onSummon(async (data) => {
+      let activeText = data?.clipboardText || ''
+      if (!activeText) {
+        try {
+          activeText = await navigator.clipboard?.readText()
+        } catch {
+          activeText = ''
+        }
+      }
+      screenContextRef.current = activeText || ''
+      setActiveScreenContext(activeText)
+    })
+  }, [])
+
+  useEffect(() => {
+    const q = input.trim()
+    if (q.length < 3) {
+      setRoutingMatches([])
+      return undefined
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      try {
+        const data = await findExpertMatches(q)
+        if (!cancelled) setRoutingMatches(data.experts ?? [])
+      } catch {
+        if (!cancelled) setRoutingMatches([])
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [input])
+
   function answerFor(question) {
     const q = question.toLowerCase()
     const match = capturedProcedures.find(p => q.includes('sfdr') || q.includes(p.title?.toLowerCase() ?? ' '))
@@ -112,10 +155,16 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
 
     // Primary path: knowledge & context engine (specs 09/10/11)
     try {
-      const context = collectUserContext({ recentQueries })
+      const context = collectUserContext({
+        recentQueries,
+        screenContext: screenContextRef.current,
+      })
       const grounded = await getGroundedAnswer(question, context)
       if (grounded && grounded.engine !== 'unavailable') {
         setMessages(m => [...m, { role: 'assistant', kind: 'grounded', content: grounded }])
+        if (grounded.engine === 'escalation_needed' && grounded.escalation?.request_draft) {
+          setEscalation(grounded.escalation)
+        }
         setThinking(false)
         return
       }
@@ -150,6 +199,26 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
     }
   }
 
+  function openManualRouting(expert) {
+    const question = input.trim() || 'Manual expert question'
+    setEscalation({
+      needed: true,
+      reasons: [expert.reason || 'Manual expert routing selected by the user'],
+      recommendation: `Routing directly to ${expert.expert_name}. ${expert.reason || ''}`.trim(),
+      experts: [expert],
+      request_draft: {
+        title: `Question for ${expert.expert_name}: ${question}`.slice(0, 96),
+        question,
+        context_summary: `Manual routing override. ${expert.reason || 'Matched expert domain.'}`,
+        requester_user_id: 'user_cosmina',
+        routed_expert_ids: [expert.id],
+        domain_tags: expert.matched_domains ?? expert.domains ?? [],
+        related_source_ids: [],
+        priority: 'medium',
+      },
+    })
+  }
+
   return (
     <div className="flex h-full">
       <div className="flex flex-col min-w-0" style={{ width: activeCite ? `${splitPct}%` : '100%', transition: 'width 0.15s' }}>
@@ -159,7 +228,13 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
         className={`flex-1 overflow-y-auto scroll-slim px-4 ${isEmpty ? 'flex' : 'py-4 space-y-4'}`}
       >
         {isEmpty ? (
-          <EmptyState onPick={submit} />
+          <EmptyState
+            input={input}
+            setInput={setInput}
+            onSubmit={submit}
+            routingMatches={routingMatches}
+            onRoute={openManualRouting}
+          />
         ) : (
           <>
             {messages.map((m, i) => (
@@ -178,6 +253,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
       </div>
 
       {/* Input */}
+      {!isEmpty && (
       <div className="border-t border-neutral-200/70 bg-white p-3 space-y-1.5">
         <form onSubmit={e => { e.preventDefault(); submit() }} className="flex gap-2">
           <input
@@ -193,6 +269,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
             <Send size={15} />
           </button>
         </form>
+        <RoutingChips matches={routingMatches} onRoute={openManualRouting} />
         <div className="flex items-center justify-center gap-1.5">
           <ShieldCheck size={10} className="text-neutral-400" />
           <p className="text-[10px] font-medium uppercase tracking-widest text-neutral-400">
@@ -200,6 +277,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
           </p>
         </div>
       </div>
+      )}
       </div>
 
       {activeCite && (
@@ -228,7 +306,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   )
 }
 
-function EmptyState({ onPick }) {
+function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute }) {
   return (
     <div className="dot-grid flex-1 flex flex-col items-center justify-center text-center px-5 -mx-4">
       <div className="grid h-11 w-11 place-items-center rounded-2xl bg-six shadow-six-glow mb-3">
@@ -238,11 +316,32 @@ function EmptyState({ onPick }) {
       <p className="mt-1 max-w-xs text-xs leading-relaxed text-neutral-500">
         I'll walk you through it using procedures captured from experts — step by step, with sources.
       </p>
+      <form
+        onSubmit={e => { e.preventDefault(); onSubmit() }}
+        className="mt-5 w-full max-w-xl"
+      >
+        <div className="flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-elevated">
+          <input
+            autoFocus
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Ask a compliance question..."
+            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-neutral-400"
+          />
+          <button
+            type="submit"
+            className="grid h-9 w-9 place-items-center rounded-xl bg-six text-white shadow-six-glow transition-all hover:bg-six-dark active:scale-95"
+          >
+            <Send size={15} />
+          </button>
+        </div>
+        <RoutingChips matches={routingMatches} onRoute={onRoute} centered />
+      </form>
       <div className="mt-5 flex flex-col gap-2 w-full">
         {STARTERS.map(q => (
           <button
             key={q}
-            onClick={() => onPick(q)}
+            onClick={() => onSubmit(q)}
             className="group flex items-center gap-2.5 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-left text-xs text-ink transition-all hover:border-six hover:shadow-card hover:-translate-y-px"
           >
             <BookOpen size={13} className="shrink-0 text-neutral-400 group-hover:text-six transition-colors" />
@@ -251,6 +350,28 @@ function EmptyState({ onPick }) {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+function RoutingChips({ matches, onRoute, centered = false }) {
+  if (!matches?.length) return null
+  return (
+    <div className={`mt-2 flex flex-wrap gap-1.5 ${centered ? 'justify-center' : 'justify-start'}`}>
+      <span className="rounded-full border border-neutral-200 bg-neutral-50 px-2 py-1 text-[10px] font-semibold text-neutral-400">
+        Routing available via
+      </span>
+      {matches.slice(0, 3).map(expert => (
+        <button
+          key={expert.id}
+          onClick={() => onRoute?.(expert)}
+          className="rounded-full border border-six/25 bg-six-light px-2.5 py-1 text-[10px] font-bold text-six transition-all hover:bg-six hover:text-white active:scale-95"
+          title={expert.reason}
+          type="button"
+        >
+          SME: {expert.expert_name} ({expert.department}) - {expert.reason}
+        </button>
+      ))}
     </div>
   )
 }

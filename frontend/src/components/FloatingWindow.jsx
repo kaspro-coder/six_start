@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { MessageSquare, Clock, Library, Users, Network, Inbox } from 'lucide-react'
+import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximize2 } from 'lucide-react'
 
 const TABS = [
   { id: 'chat',     label: 'Assistant',       Icon: MessageSquare },
@@ -14,10 +14,12 @@ const MIN_W = 480
 const MIN_H = 520
 const DEFAULT_W = 760
 const DEFAULT_H = 780
+const COMPACT_W = 244
+const COMPACT_H = 64
 
 function getDefaultPos() {
   return {
-    x: Math.max(20, window.innerWidth  - DEFAULT_W - 32),
+    x: Math.max(20, window.innerWidth - DEFAULT_W - 32),
     y: Math.max(20, Math.round((window.innerHeight - DEFAULT_H) / 2)),
   }
 }
@@ -25,46 +27,48 @@ function getDefaultPos() {
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
 export default function FloatingWindow({ children, tabBadges = {} }) {
-  const [mode,      setMode]      = useState('windowed')
-  const [pos,       setPos]       = useState(getDefaultPos)
-  const [size,      setSize]      = useState({ w: DEFAULT_W, h: DEFAULT_H })
+  const [mode, setMode] = useState('windowed')
+  const [pos, setPos] = useState(getDefaultPos)
+  const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const [activeTab, setActiveTab] = useState('chat')
 
-  const dragRef   = useRef(null)
+  const dragRef = useRef(null)
   const resizeRef = useRef(null)
 
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') handleCompact() }
+    function onKey(e) {
+      if (e.key === 'Escape') handleCompact()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  useEffect(() => {
+    document.body.classList.toggle('sixsens-compact-mode', mode === 'compact')
+    return () => document.body.classList.remove('sixsens-compact-mode')
+  }, [mode])
 
   function handleCompact() {
     if (isElectron) window.electronAPI.compact()
     setMode('compact')
   }
+
   function handleRestore() {
     if (isElectron) window.electronAPI.restore()
     setMode('windowed')
   }
-  function handleToggleMax() {
-    if (isElectron) {
-      window.electronAPI.toggleMaximize()
-      setMode(m => m === 'maximized' ? 'windowed' : 'maximized')
-    } else {
-      setMode(m => m === 'maximized' ? 'windowed' : 'maximized')
-    }
-  }
+
   function handleClose() {
     if (isElectron) window.electronAPI.close()
   }
 
   function onTitlePointerDown(e) {
-    if (isElectron || mode === 'maximized') return
+    if (isElectron) return
     if (e.target.closest('.no-drag')) return
     e.currentTarget.setPointerCapture(e.pointerId)
     dragRef.current = { startX: e.clientX, startY: e.clientY, ox: pos.x, oy: pos.y }
   }
+
   function onTitlePointerMove(e) {
     if (!dragRef.current) return
     setPos({
@@ -72,13 +76,17 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
       y: dragRef.current.oy + (e.clientY - dragRef.current.startY),
     })
   }
-  function onTitlePointerUp() { dragRef.current = null }
+
+  function onTitlePointerUp() {
+    dragRef.current = null
+  }
 
   function onResizePointerDown(e) {
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
     resizeRef.current = { startX: e.clientX, startY: e.clientY, sw: size.w, sh: size.h }
   }
+
   function onResizePointerMove(e) {
     if (!resizeRef.current) return
     setSize({
@@ -86,58 +94,66 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
       h: Math.max(MIN_H, resizeRef.current.sh + (e.clientY - resizeRef.current.startY)),
     })
   }
-  function onResizePointerUp() { resizeRef.current = null }
 
-  // ── Compact bar ────────────────────────────────────────────────────────
+  function onResizePointerUp() {
+    resizeRef.current = null
+  }
+
   if (mode === 'compact') {
     return (
       <div
-        className="fixed inset-0 z-50 flex items-center bg-white border border-neutral-200/80 shadow-elevated select-none overflow-hidden"
-        style={!isElectron ? { bottom: 24, right: 24, top: 'auto', left: 'auto', width: 300, height: 52, borderRadius: 16 } : {}}
+        className={`sixsens-floating-window fixed inset-0 z-50 overflow-hidden rounded-[22px] border border-neutral-200 bg-white shadow-elevated ring-1 ring-black/10 select-none ${isElectron ? 'drag-region' : ''}`}
       >
-        <div className="no-drag flex items-center gap-3 flex-1 pl-4 cursor-pointer" onClick={handleRestore}>
-          <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-            <TrafficLight color="red"    onClick={handleRestore}   />
-            <TrafficLight color="yellow" onClick={handleRestore}   />
-            <TrafficLight color="green"  onClick={handleToggleMax} />
+        <div className="relative flex h-full items-center gap-3 px-3">
+          <span className="pointer-events-none absolute inset-y-2 left-2 w-16 rounded-[18px] bg-six/10 blur-xl" />
+
+          <button
+            className="no-drag relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-six text-white shadow-six-glow transition-transform hover:scale-105 active:scale-95"
+            onClick={handleRestore}
+            title="Open SIXsens"
+            type="button"
+          >
+            <span className="h-3.5 w-3.5 rounded-[5px] bg-white/90" />
+          </button>
+
+          <button className="no-drag relative min-w-0 flex-1 text-left" onClick={handleRestore} type="button">
+            <p className="truncate font-display text-[13px] font-extrabold tracking-tight text-ink">
+              SIX<span className="text-neutral-400 font-semibold">sens</span>
+            </p>
+            <p className="truncate text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+              Ready
+            </p>
+          </button>
+
+          <div className="no-drag relative flex items-center gap-1">
+            <CompactButton title="Open" onClick={handleRestore}>
+              <Maximize2 size={13} />
+            </CompactButton>
+            <CompactButton title="Close" onClick={handleClose}>
+              <X size={13} />
+            </CompactButton>
           </div>
-          <BrandGlyph size="sm" />
-          <span className="font-display text-sm font-bold text-ink tracking-tight">
-            SIX<span className="text-neutral-400 font-semibold">sens</span>
-          </span>
-        </div>
-        <div className="drag-region h-full w-8 flex items-center justify-center cursor-grab shrink-0">
-          <DragDots />
         </div>
       </div>
     )
   }
 
-  const isMax = mode === 'maximized'
   const windowStyle = isElectron
     ? { inset: 0 }
-    : isMax
-      ? { inset: 0, borderRadius: 0 }
-      : { left: pos.x, top: pos.y, width: size.w, height: size.h, borderRadius: 16 }
+    : { left: pos.x, top: pos.y, width: size.w, height: size.h, borderRadius: 16 }
 
   return (
     <div
-      className="fixed z-50 flex flex-col bg-canvas border border-neutral-200/80 shadow-elevated overflow-hidden select-none"
+      className="sixsens-floating-window fixed z-50 flex flex-col bg-canvas border border-neutral-200/80 shadow-elevated overflow-hidden select-none"
       style={windowStyle}
     >
-      {/* ── Title bar ────────────────────────────────────────────────── */}
       <div
         className={`flex items-center gap-3 px-4 py-3 bg-white border-b border-neutral-200/80 shrink-0 ${isElectron ? 'drag-region' : ''}`}
         onPointerDown={onTitlePointerDown}
         onPointerMove={onTitlePointerMove}
         onPointerUp={onTitlePointerUp}
       >
-        <div className="no-drag flex items-center gap-1.5 shrink-0">
-          <TrafficLight color="red"    onClick={handleCompact}   />
-          <TrafficLight color="yellow" onClick={handleCompact}   />
-          <TrafficLight color="green"  onClick={handleToggleMax} />
-        </div>
-        <div className={`flex-1 flex items-center justify-center gap-2 pointer-events-none ${isElectron ? 'drag-region' : ''}`}>
+        <div className={`flex-1 flex items-center gap-2 pointer-events-none ${isElectron ? 'drag-region' : ''}`}>
           <BrandGlyph size="md" />
           <span className="font-display text-sm font-bold text-ink tracking-tight">
             SIX<span className="text-neutral-400 font-semibold">sens</span>
@@ -146,12 +162,18 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
             Institutional Assistant
           </span>
         </div>
-        <div className={`w-[62px] shrink-0 ${isElectron ? 'drag-region' : ''}`} />
+
+        <div className="no-drag flex items-center gap-1 shrink-0">
+          <WindowButton title="Minimize" onClick={handleCompact}>
+            <Minus size={14} />
+          </WindowButton>
+          <WindowButton title="Close" onClick={handleClose}>
+            <X size={14} />
+          </WindowButton>
+        </div>
       </div>
 
-      {/* ── Body: left nav + content ──────────────────────────────────── */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left sidebar nav */}
         <aside className="no-drag w-44 shrink-0 flex flex-col bg-white border-r border-neutral-200/80 select-text">
           <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5 overflow-y-auto">
             {TABS.map(({ id, label, Icon }) => {
@@ -165,6 +187,7 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
                       ? 'bg-six-light text-six'
                       : 'text-neutral-500 hover:text-ink hover:bg-neutral-50'
                   }`}
+                  type="button"
                 >
                   <Icon size={13} className="shrink-0" />
                   <span className="flex-1">{label}</span>
@@ -178,7 +201,6 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
             })}
           </nav>
 
-          {/* User footer */}
           <div className="px-3 py-3 border-t border-neutral-100 flex items-center gap-2">
             <div className="h-6 w-6 rounded-full bg-neutral-200 grid place-items-center text-[10px] font-bold text-ink shrink-0">C</div>
             <div className="min-w-0">
@@ -188,14 +210,12 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
           </div>
         </aside>
 
-        {/* Content area */}
         <div className="no-drag flex-1 min-w-0 flex flex-col overflow-hidden select-text">
           {children(activeTab, setActiveTab)}
         </div>
       </div>
 
-      {/* ── Resize grip ───────────────────────────────────────────────── */}
-      {!isElectron && !isMax && (
+      {!isElectron && (
         <div
           className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize z-10"
           onPointerDown={onResizePointerDown}
@@ -209,14 +229,29 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
   )
 }
 
-function TrafficLight({ color, onClick }) {
-  const colors = {
-    red:    'bg-[#FF5F57] hover:bg-[#FF3B30] ring-1 ring-black/10',
-    yellow: 'bg-[#FFBD2E] hover:bg-[#FFCC00] ring-1 ring-black/10',
-    green:  'bg-[#28C840] hover:bg-[#34C759] ring-1 ring-black/10',
-  }
+function WindowButton({ title, onClick, children }) {
   return (
-    <button onClick={onClick} className={`h-3 w-3 rounded-full transition-all active:scale-90 ${colors[color]}`} />
+    <button
+      title={title}
+      onClick={onClick}
+      type="button"
+      className="grid h-8 w-8 place-items-center rounded-lg text-neutral-400 transition-all hover:bg-neutral-100 hover:text-ink active:scale-95"
+    >
+      {children}
+    </button>
+  )
+}
+
+function CompactButton({ title, onClick, children }) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      type="button"
+      className="grid h-8 w-8 place-items-center rounded-xl border border-neutral-200/70 bg-white/80 text-neutral-400 shadow-sm transition-all hover:border-six/25 hover:bg-six-light hover:text-six active:scale-95"
+    >
+      {children}
+    </button>
   )
 }
 
@@ -227,19 +262,6 @@ function BrandGlyph({ size = 'md' }) {
     <span className={`grid place-items-center bg-six shadow-six-glow shrink-0 ${outer}`}>
       <span className={`bg-white/90 ${inner}`} />
     </span>
-  )
-}
-
-function DragDots() {
-  return (
-    <svg width="12" height="20" viewBox="0 0 12 20" className="text-neutral-300">
-      <circle cx="3" cy="4"  r="1.5" fill="currentColor" />
-      <circle cx="9" cy="4"  r="1.5" fill="currentColor" />
-      <circle cx="3" cy="10" r="1.5" fill="currentColor" />
-      <circle cx="9" cy="10" r="1.5" fill="currentColor" />
-      <circle cx="3" cy="16" r="1.5" fill="currentColor" />
-      <circle cx="9" cy="16" r="1.5" fill="currentColor" />
-    </svg>
   )
 }
 
