@@ -78,6 +78,29 @@ function SessionRow({ session, onOpen }) {
   )
 }
 
+// Normalize the various assistant payload shapes (procedure / agent / rag /
+// grounded) into a flat { title, body, steps[] } the read-only transcript can
+// render. Steps may arrive as plain strings or as { text, citations } objects.
+function summarizeStructured(kind, content) {
+  const c = content ?? {}
+  const stepText = steps => (Array.isArray(steps) ? steps : [])
+    .map(s => (typeof s === 'string' ? s : s?.text ?? ''))
+    .filter(Boolean)
+
+  if (kind === 'rag') {
+    const a = c.answer ?? {}
+    return { title: a.title, body: a.summary, steps: stepText(a.steps) }
+  }
+  if (kind === 'grounded') {
+    return { title: c.title, body: c.answer ?? c.message, steps: stepText(c.steps) }
+  }
+  if (kind === 'agent') {
+    return { title: c.title, body: c.message, steps: stepText(c.steps) }
+  }
+  // procedure
+  return { title: c.title, body: c.lead ?? c.message, steps: stepText(c.steps) }
+}
+
 function TranscriptView({ session, onBack }) {
   const date = new Date(session.startedAt)
   const label = date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -101,11 +124,11 @@ function TranscriptView({ session, onBack }) {
       {/* Transcript */}
       <div className="flex-1 overflow-y-auto scroll-slim px-4 py-4 space-y-4">
         {session.messages
-          .filter(m => m.kind === 'text' || m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent')
+          .filter(m => m.kind === 'text' || m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent' || m.kind === 'grounded')
           .map((m, i) => {
             const isUser     = m.role === 'user'
-            const isStructured = m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent'
-            const structured   = isStructured ? m.content : null
+            const isStructured = m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent' || m.kind === 'grounded'
+            const structured   = isStructured ? summarizeStructured(m.kind, m.content) : null
             return (
               <div key={i} className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
                 <div className={`h-6 w-6 shrink-0 rounded-md flex items-center justify-center text-[10px] font-bold ${isUser ? 'bg-neutral-200 text-ink' : 'bg-six text-white'}`}>
@@ -115,11 +138,10 @@ function TranscriptView({ session, onBack }) {
                   {isStructured && structured ? (
                     <div className="inline-block text-left bg-white rounded-xl px-3 py-2.5 border border-neutral-200 text-xs">
                       {structured.title && <p className="font-bold text-ink mb-1.5">{structured.title}</p>}
-                      {structured.lead  && <p className="text-neutral-600 mb-1.5 leading-relaxed">{structured.lead}</p>}
-                      {structured.message && !structured.steps && (
-                        <p className="text-neutral-600 leading-relaxed">{structured.message}</p>
+                      {structured.body && (
+                        <p className="text-neutral-600 mb-1.5 leading-relaxed whitespace-pre-wrap">{structured.body}</p>
                       )}
-                      {structured.steps?.length > 0 && (
+                      {structured.steps.length > 0 && (
                         <ol className="space-y-1">
                           {structured.steps.map((s, j) => (
                             <li key={j} className="flex gap-1.5">
@@ -128,6 +150,9 @@ function TranscriptView({ session, onBack }) {
                             </li>
                           ))}
                         </ol>
+                      )}
+                      {!structured.title && !structured.body && structured.steps.length === 0 && (
+                        <p className="text-neutral-400 italic">[answer omitted from transcript]</p>
                       )}
                     </div>
                   ) : (

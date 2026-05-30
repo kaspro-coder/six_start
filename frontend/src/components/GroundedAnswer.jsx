@@ -151,9 +151,6 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
           <EscalationBlock esc={esc} onSelectExpert={onSelectExpert} onEscalate={() => onEscalate?.(esc)} />
         )}
 
-        {/* ── Context used ───────────────────────────────────── */}
-        <ContextUsed ctx={data.context_used} plan={data.query_plan} />
-
         {/* ── Sources (small chips; expand to full card on click) ─ */}
         <SourcePanel sources={sources} onCiteClick={onCiteClick} />
 
@@ -262,37 +259,6 @@ function EscalationBlock({ esc, onSelectExpert, onEscalate }) {
             <MessageSquarePlus size={11} /> Send knowledge request
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function ContextUsed({ ctx, plan }) {
-  if (!ctx) return null
-  const chips = []
-  if (ctx.current_workflow) chips.push({ Icon: MapPin, text: ctx.current_workflow })
-  else if (ctx.current_page) chips.push({ Icon: MapPin, text: ctx.current_page })
-  if (ctx.department) chips.push({ Icon: Building2, text: ctx.department })
-  ;(ctx.target_domains ?? []).forEach(d => chips.push({ Icon: Layers, text: domainLabel(d) }))
-  if (ctx.selected_text_used) chips.push({ Icon: FileText, text: 'Selected text' })
-  chips.push({ Icon: BookOpen, text: `${ctx.retrieved_source_count ?? 0} sources` })
-
-  return (
-    <div className="border-t border-neutral-100 pt-2.5">
-      <div className="flex items-center gap-2 mb-1.5">
-        <SectionLabel>Context used</SectionLabel>
-        {plan?.detected_intent && plan.detected_intent !== 'unknown' && (
-          <span className="rounded-full bg-six-light px-1.5 py-0.5 text-[9px] font-bold text-six">
-            {plan.detected_intent.replace(/_/g, ' ')}
-          </span>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {chips.map((c, i) => (
-          <span key={i} className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-600">
-            <c.Icon size={10} className="text-neutral-400" /> {c.text}
-          </span>
-        ))}
       </div>
     </div>
   )
@@ -505,9 +471,3 @@ function NextBestActions({ actions, sources, experts, onAsk, onCiteClick, onSele
   )
 }
 
-function domainLabel(d) {
-  return {
-    esg_sfdr: 'ESG / SFDR', fatca_tax: 'FATCA / Tax', mifid: 'MiFID II',
-    master_data: 'Master Data', settlement: 'Settlement',
-  }[d] ?? d
-}

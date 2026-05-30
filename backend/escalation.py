@@ -16,9 +16,15 @@ from typing import Any
 
 import knowledge_store as ks
 
-# A chunk needs at least this score to count as "solid" support.
-SOLID_SCORE = 4.0
+# A chunk needs at least this *topical* match (keywords + domain, independent of
+# source quality) to count as genuinely on-topic support.
+MATCH_SOLID = 3.0
 STRICT_CONFIDENCE_THRESHOLD = 0.60
+
+
+def _match(c: dict[str, Any]) -> float:
+    """Topical relevance to the question (falls back to relevance_score)."""
+    return float(c.get("match_score", c.get("relevance_score", 0.0)))
 
 
 def score_confidence(
@@ -29,8 +35,10 @@ def score_confidence(
     verified = [c for c in ranked if c.get("trust_level") == "verified"]
     stale = [c for c in ranked if c.get("trust_level") == "stale"]
     draft = [c for c in ranked if c.get("trust_level") == "draft"]
-    solid = [c for c in ranked if c.get("relevance_score", 0) >= SOLID_SCORE]
-    top = ranked[0]["relevance_score"] if ranked else 0.0
+    # "solid" = genuinely on-topic; "verified_solid" = on-topic AND verified.
+    solid = [c for c in ranked if _match(c) >= MATCH_SOLID]
+    verified_solid = [c for c in verified if _match(c) >= MATCH_SOLID]
+    top = max((_match(c) for c in ranked), default=0.0)
 
     limitations: list[str] = []
     if not ranked:
@@ -46,11 +54,11 @@ def score_confidence(
         )
     if plan.get("detected_intent") == "unknown":
         limitations.append("The intent of the question was ambiguous.")
-    if ranked and not verified:
-        limitations.append("No verified source directly backs this answer.")
+    if ranked and not verified_solid:
+        limitations.append("No verified source directly matches this question.")
 
-    # Decide the level.
-    score_pct = _confidence_score_pct(ranked, verified, solid)
+    # Decide the level — driven by on-topic, verified support.
+    score_pct = _confidence_score_pct(ranked, verified_solid, solid, top)
 
     if score_pct < STRICT_CONFIDENCE_THRESHOLD:
         level = "low"
@@ -58,25 +66,30 @@ def score_confidence(
             "Below the 60% evidence threshold; no documented solution is "
             "strong enough to generate safely."
         )
-    elif len(verified) >= 2 and len(solid) >= 1:
+    elif len(verified_solid) >= 2 and len(solid) >= 1:
         level = "high"
         reason = (
-            f"Backed by {len(verified)} verified sources"
-            + (f" including \"{verified[0]['title']}\"" if verified else "")
+            f"Backed by {len(verified_solid)} verified sources directly on topic"
+            + (f" including \"{verified_solid[0]['title']}\"" if verified_solid else "")
             + "."
         )
-    elif verified and top >= SOLID_SCORE:
+    elif verified_solid and top >= 2 * MATCH_SOLID:
+        level = "high"
+        reason = (
+            f"Backed by a verified source that directly matches: "
+            f"\"{verified_solid[0]['title']}\"."
+        )
+    elif verified_solid and top >= MATCH_SOLID:
         level = "medium"
-        reason = "One verified source matches strongly"
+        reason = "One verified source matches the question"
         if stale:
             reason += ", but the most relevant historic note is stale"
         reason += "."
     elif ranked and top > 1.5:
-        level = "medium" if verified else "low"
+        level = "low"
         reason = (
-            "Related information found, "
-            + ("but no verified source directly matches."
-               if not verified else "with partial verified support.")
+            "Only loosely related information found; "
+            "no verified source directly matches this question."
         )
     else:
         level = "low"
@@ -94,17 +107,19 @@ def score_confidence(
 
 def _confidence_score_pct(
     ranked: list[dict[str, Any]],
-    verified: list[dict[str, Any]],
+    verified_solid: list[dict[str, Any]],
     solid: list[dict[str, Any]],
+    top_match: float,
 ) -> float:
     if not ranked:
         return 0.0
 
-    top = max(0.0, float(ranked[0].get("relevance_score", 0.0)))
-    top_component = min(top / 8.0, 1.0) * 0.45
-    verified_component = min(len(verified) / 2.0, 1.0) * 0.35
+    # The best on-topic chunk; penalise if our only real match is stale.
+    best = max(ranked, key=_match)
+    top_component = min(max(0.0, top_match) / 8.0, 1.0) * 0.45
+    verified_component = min(len(verified_solid) / 2.0, 1.0) * 0.35
     solid_component = min(len(solid) / 2.0, 1.0) * 0.20
-    stale_penalty = 0.15 if ranked[0].get("trust_level") == "stale" else 0.0
+    stale_penalty = 0.15 if best.get("trust_level") == "stale" else 0.0
     return max(0.0, min(1.0, top_component + verified_component + solid_component - stale_penalty))
 
 
@@ -145,9 +160,12 @@ def build_escalation(
 ) -> dict[str, Any]:
     """Assemble the escalation block: ranked experts + a request draft."""
     related_ids = [c["source_id"] for c in ranked]
+    # Route on the question's own domain (not the current-screen context), so a
+    # settlement question routes to the settlement SME even on the Master Data screen.
+    routing_domains = plan.get("query_domains") or plan.get("target_domains", [])
     experts = ks.route_experts(
         query,
-        domains=plan.get("target_domains", []),
+        domains=routing_domains,
         related_source_ids=related_ids,
         limit=3,
     )

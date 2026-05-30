@@ -105,10 +105,12 @@ def plan_query(query: str, context: dict[str, Any] | None = None) -> dict[str, A
             intent = candidate
             break
 
-    domains = ks.detect_domains(query)
+    query_domains = ks.detect_domains(query)
+    domains = list(query_domains)
     ctx = context or {}
     # Pull in the user's current-context domains when the query itself is thin
-    # (e.g. "what does this mean?" while on the SFDR page).
+    # (e.g. "what does this mean?" while on the SFDR page). These widen retrieval
+    # but must NOT count as the question's own topic (see query_domains below).
     if ctx.get("context_domains"):
         domains = list(dict.fromkeys([*domains, *ctx["context_domains"]]))
 
@@ -138,6 +140,7 @@ def plan_query(query: str, context: dict[str, Any] | None = None) -> dict[str, A
         "detected_intent": intent,
         "required_context": list(dict.fromkeys(required_context)),
         "target_domains": domains,
+        "query_domains": list(query_domains),
         "suggested_experts": suggested_experts,
     }
 
@@ -235,6 +238,7 @@ def rank_chunks(
     """
     q_tokens = ks._tokens(plan["original_query"])
     target_domains = set(plan.get("target_domains", []))
+    query_domains = set(plan.get("query_domains", plan.get("target_domains", [])))
     ctx_domains = set(context.get("context_domains", []))
     ctx_dept = context.get("department")
 
@@ -244,16 +248,19 @@ def rank_chunks(
         title_tokens = ks._tokens(c.get("title", ""))
         tag_tokens = ks._tokens(" ".join(c.get("tags", [])))
 
+        kw_title = len(q_tokens & title_tokens)
+        kw_tag = len(q_tokens & tag_tokens)
         kw = (
             1.0 * len(q_tokens & content_tokens)
-            + 1.5 * len(q_tokens & title_tokens)
-            + 2.0 * len(q_tokens & tag_tokens)
+            + 1.5 * kw_title
+            + 2.0 * kw_tag
         )
         matched_terms = sorted(
             q_tokens & (content_tokens | title_tokens | tag_tokens)
         )
 
         domain_hit = bool(target_domains & set(c.get("domains", [])))
+        query_domain_hit = bool(query_domains & set(c.get("domains", [])))
         type_priority = ks.TYPE_PRIORITY.get(c.get("source_type"), 0.7)
         trust = TRUST_WEIGHT.get(c.get("trust_level", "unknown"), 0.0)
 
@@ -266,6 +273,19 @@ def rank_chunks(
         ctx_domain_hit = bool(ctx_domains & set(c.get("domains", [])))
         dept_hit = bool(ctx_dept and c.get("department") == ctx_dept)
 
+        # Topical match to the *question only*, using high-precision signals:
+        # title/tag overlap + the domain detected from the question. Raw content
+        # overlap and *context* domains are deliberately excluded — large PDFs
+        # share common words, and sitting on the Master Data screen must not make
+        # Master Data chunks look on-topic for a settlement question.
+        match_score = (
+            1.5 * kw_title
+            + 2.0 * kw_tag
+            + (2.0 if query_domain_hit else 0.0)
+        )
+
+        # Overall ranking score keeps context breadth (merged domains + current
+        # screen) so context-relevant sources still surface and rank well.
         score = (
             kw
             + (2.0 if domain_hit else 0.0)
@@ -282,6 +302,7 @@ def rank_chunks(
                 **c,
                 "matched_terms": matched_terms,
                 "relevance_score": round(score, 3),
+                "match_score": round(match_score, 3),
                 "reason": _explain(
                     c, matched_terms, domain_hit, trust, days,
                     bool(c.get("owner_expert_ids")), ctx_domain_hit,

@@ -704,6 +704,10 @@ def _expert_citations(ranked: list[dict[str, Any]],
     for r in routed:
         seen[r["id"]] = {**r}
     for c in ranked:
+        # Only surface a chunk's owner if that chunk is genuinely on-topic —
+        # otherwise an off-topic but expert-owned source routes the wrong person.
+        if float(c.get("match_score", c.get("relevance_score", 0.0))) < 3.0:
+            continue
         for eid in c.get("owner_expert_ids", []):
             if eid in seen or eid not in ks.EXPERTS_BY_ID:
                 continue

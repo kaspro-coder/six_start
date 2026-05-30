@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { FileText, Search, Eye, Download } from 'lucide-react'
+import { FileText, Search, Download } from 'lucide-react'
 import DocViewer from './DocViewer.jsx'
 
 // Nicer display titles for the known corpus files (fallback cleans the rest).
@@ -57,7 +57,7 @@ function typeOf(name, sourceType) {
   return 'Document'
 }
 
-const GRID = 'grid grid-cols-[minmax(0,1fr)_180px_150px_120px_44px_76px] items-center gap-3'
+const GRID = 'grid grid-cols-[minmax(0,1fr)_180px_150px_120px_56px] items-center gap-3'
 
 export default function LibraryPane() {
   const [docs, setDocs]       = useState([])
@@ -127,7 +127,6 @@ export default function LibraryPane() {
                 <span>Dept</span>
                 <span>Type</span>
                 <span>Updated</span>
-                <span className="text-right">P.</span>
                 <span />
               </div>
 
@@ -202,17 +201,7 @@ function DocRow({ doc, active, onOpen }) {
 
       <span className="font-mono text-xs text-neutral-400">{doc.updated ?? '—'}</span>
 
-      <span className="text-right text-xs tabular-nums text-neutral-400">{doc.pages ?? '—'}</span>
-
-      <span className="flex items-center justify-end gap-1.5">
-        <button
-          type="button"
-          title="Preview"
-          onClick={e => { e.stopPropagation(); onOpen() }}
-          className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-six"
-        >
-          <Eye size={15} />
-        </button>
+      <span className="flex items-center justify-end">
         <a
           href={`/api/documents/${encodeURIComponent(doc.filename)}`}
           download

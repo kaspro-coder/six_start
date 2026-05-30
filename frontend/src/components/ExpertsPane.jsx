@@ -109,7 +109,7 @@ const EMPLOYEES = [
 
 export default function ExpertsPane() {
   const [selectedId, setSelectedId] = useState(null)
-  const [messaging, setMessaging]   = useState(false)
+  const [contactEmp, setContactEmp] = useState(null)
   const [query, setQuery]           = useState('')
   const [dept, setDept]             = useState('All Departments')
 
@@ -165,7 +165,7 @@ export default function ExpertsPane() {
               key={e.id}
               employee={e}
               onProfile={() => setSelectedId(e.id)}
-              onContact={() => { setSelectedId(e.id); setMessaging(true) }}
+              onContact={() => setContactEmp(e)}
             />
           ))}
         </div>
@@ -190,16 +190,16 @@ export default function ExpertsPane() {
           <ProfilePanel
             employee={shown}
             onClose={() => setSelectedId(null)}
-            onContact={() => setMessaging(true)}
+            onContact={() => setContactEmp(shown)}
           />
         )}
       </aside>
 
-      {messaging && employee && (
+      {contactEmp && (
         <ContactExpertModal
-          expert={{ ...employee, expert_name: employee.name, role_title: employee.role, expertise_tags: employee.expertise }}
-          onClose={() => setMessaging(false)}
-          onSubmitted={() => setMessaging(false)}
+          expert={{ ...contactEmp, expert_name: contactEmp.name, role_title: contactEmp.role, expertise_tags: contactEmp.expertise }}
+          onClose={() => setContactEmp(null)}
+          onSubmitted={() => setContactEmp(null)}
         />
       )}
     </div>
@@ -343,19 +343,13 @@ function ProfilePanel({ employee, onClose, onContact }) {
       </div>
 
       {/* Actions */}
-      <div className="px-5 py-3 border-t border-neutral-100 shrink-0 flex gap-2">
+      <div className="px-5 py-3 border-t border-neutral-100 shrink-0">
         <button
           onClick={onContact}
-          className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-six text-white text-xs font-semibold py-2 hover:bg-six/90 transition-colors"
+          className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-six text-white text-xs font-semibold py-2 hover:bg-six/90 transition-colors"
           type="button"
         >
           <Mail size={12} /> Contact expert
-        </button>
-        <button
-          className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-neutral-200 text-ink text-xs font-semibold py-2 hover:bg-neutral-50 transition-colors"
-          type="button"
-        >
-          <BookOpen size={12} /> View procedures
         </button>
       </div>
     </>
