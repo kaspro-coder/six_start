@@ -101,26 +101,34 @@ function TranscriptView({ session, onBack }) {
       {/* Transcript */}
       <div className="flex-1 overflow-y-auto scroll-slim px-4 py-4 space-y-4">
         {session.messages
-          .filter(m => m.kind === 'text' || m.kind === 'procedure')
+          .filter(m => m.kind === 'text' || m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent')
           .map((m, i) => {
-            const isUser = m.role === 'user'
+            const isUser     = m.role === 'user'
+            const isStructured = m.kind === 'procedure' || m.kind === 'rag' || m.kind === 'agent'
+            const structured   = isStructured ? m.content : null
             return (
               <div key={i} className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
                 <div className={`h-6 w-6 shrink-0 rounded-md flex items-center justify-center text-[10px] font-bold ${isUser ? 'bg-neutral-200 text-ink' : 'bg-six text-white'}`}>
                   {isUser ? 'C' : <span className="h-1.5 w-1.5 rounded-[2px] bg-white/90 block" />}
                 </div>
                 <div className={`max-w-[85%] ${isUser ? 'text-right' : ''}`}>
-                  {m.kind === 'procedure' ? (
+                  {isStructured && structured ? (
                     <div className="inline-block text-left bg-white rounded-xl px-3 py-2.5 border border-neutral-200 text-xs">
-                      <p className="font-bold text-ink mb-1.5">{m.content.title}</p>
-                      <ol className="space-y-1">
-                        {m.content.steps?.map((s, j) => (
-                          <li key={j} className="flex gap-1.5">
-                            <span className="shrink-0 h-3.5 w-3.5 rounded-full bg-six text-white text-[8px] font-bold flex items-center justify-center mt-px">{j+1}</span>
-                            <span className="text-neutral-600 leading-relaxed">{s}</span>
-                          </li>
-                        ))}
-                      </ol>
+                      {structured.title && <p className="font-bold text-ink mb-1.5">{structured.title}</p>}
+                      {structured.lead  && <p className="text-neutral-600 mb-1.5 leading-relaxed">{structured.lead}</p>}
+                      {structured.message && !structured.steps && (
+                        <p className="text-neutral-600 leading-relaxed">{structured.message}</p>
+                      )}
+                      {structured.steps?.length > 0 && (
+                        <ol className="space-y-1">
+                          {structured.steps.map((s, j) => (
+                            <li key={j} className="flex gap-1.5">
+                              <span className="shrink-0 h-3.5 w-3.5 rounded-full bg-six text-white text-[8px] font-bold flex items-center justify-center mt-px">{j+1}</span>
+                              <span className="text-neutral-600 leading-relaxed">{s}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
                     </div>
                   ) : (
                     <div className={`inline-block rounded-2xl px-3 py-2 text-xs leading-relaxed ${isUser ? 'bg-ink text-white rounded-tr-sm' : 'bg-neutral-100 text-ink rounded-tl-sm'}`}>

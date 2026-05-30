@@ -1,0 +1,20 @@
+[
+  {
+    "id": "kr_4dddc2af",
+    "title": "Question for Jacob Keller: hj",
+    "question": "hj",
+    "context_summary": "Sent directly to Jacob Keller (ESG & SFDR Workflow Expert) via Contact Expert.",
+    "requester_user_id": "user_cosmina",
+    "routed_expert_ids": [
+      "exp_jacob_keller"
+    ],
+    "domain_tags": [],
+    "related_source_ids": [],
+    "priority": "medium",
+    "notes": "",
+    "status": "open",
+    "created_at": "2026-05-30T17:11:33.823266+00:00",
+    "updated_at": "2026-05-30T17:11:33.823266+00:00",
+    "resolution": null
+  }
+]

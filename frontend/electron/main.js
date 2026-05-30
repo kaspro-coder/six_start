@@ -33,6 +33,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+app.on('before-quit', () => {
+  try { require('child_process').execSync('pkill -f "uvicorn|vite"') } catch {}
+})
+
 ipcMain.on('win-compact',         () => { win.setResizable(false); win.setSize(300, 52) })
 ipcMain.on('win-restore',         () => { win.setSize(700, 780); win.setResizable(true) })
 let savedBounds = null

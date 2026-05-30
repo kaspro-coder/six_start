@@ -1,15 +1,18 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { MessageSquare, Clock, Library } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { MessageSquare, Clock, Library, Users, Network, Inbox } from 'lucide-react'
 
 const TABS = [
-  { id: 'chat',     label: 'Chat',     Icon: MessageSquare },
-  { id: 'sessions', label: 'Sessions', Icon: Clock },
-  { id: 'library',  label: 'Library',  Icon: Library },
+  { id: 'chat',     label: 'Assistant',       Icon: MessageSquare },
+  { id: 'library',  label: 'Library',         Icon: Library },
+  { id: 'experts',  label: 'Experts',         Icon: Users },
+  { id: 'graph',    label: 'Knowledge Graph', Icon: Network },
+  { id: 'inbox',    label: 'Expert Inbox',    Icon: Inbox },
+  { id: 'sessions', label: 'Sessions',        Icon: Clock },
 ]
 
-const MIN_W = 420
+const MIN_W = 480
 const MIN_H = 520
-const DEFAULT_W = 700
+const DEFAULT_W = 760
 const DEFAULT_H = 780
 
 function getDefaultPos() {
@@ -21,8 +24,8 @@ function getDefaultPos() {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
-export default function FloatingWindow({ children }) {
-  const [mode,      setMode]      = useState('windowed') // 'compact' | 'windowed' | 'maximized'
+export default function FloatingWindow({ children, tabBadges = {} }) {
+  const [mode,      setMode]      = useState('windowed')
   const [pos,       setPos]       = useState(getDefaultPos)
   const [size,      setSize]      = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const [activeTab, setActiveTab] = useState('chat')
@@ -31,9 +34,7 @@ export default function FloatingWindow({ children }) {
   const resizeRef = useRef(null)
 
   useEffect(() => {
-    function onKey(e) {
-      if (e.key === 'Escape') handleCompact()
-    }
+    function onKey(e) { if (e.key === 'Escape') handleCompact() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
@@ -42,12 +43,10 @@ export default function FloatingWindow({ children }) {
     if (isElectron) window.electronAPI.compact()
     setMode('compact')
   }
-
   function handleRestore() {
     if (isElectron) window.electronAPI.restore()
     setMode('windowed')
   }
-
   function handleToggleMax() {
     if (isElectron) {
       window.electronAPI.toggleMaximize()
@@ -56,12 +55,10 @@ export default function FloatingWindow({ children }) {
       setMode(m => m === 'maximized' ? 'windowed' : 'maximized')
     }
   }
-
   function handleClose() {
     if (isElectron) window.electronAPI.close()
   }
 
-  // ── Browser-only drag ──────────────────────────────────────────────────
   function onTitlePointerDown(e) {
     if (isElectron || mode === 'maximized') return
     if (e.target.closest('.no-drag')) return
@@ -77,7 +74,6 @@ export default function FloatingWindow({ children }) {
   }
   function onTitlePointerUp() { dragRef.current = null }
 
-  // ── Browser-only resize ────────────────────────────────────────────────
   function onResizePointerDown(e) {
     e.stopPropagation()
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -92,7 +88,7 @@ export default function FloatingWindow({ children }) {
   }
   function onResizePointerUp() { resizeRef.current = null }
 
-  // ── Compact bar — always on screen, fills the 300×52 Electron window ──
+  // ── Compact bar ────────────────────────────────────────────────────────
   if (mode === 'compact') {
     return (
       <div
@@ -101,9 +97,9 @@ export default function FloatingWindow({ children }) {
       >
         <div className="no-drag flex items-center gap-3 flex-1 pl-4 cursor-pointer" onClick={handleRestore}>
           <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-            <TrafficLight color="red"    title="Expand"   onClick={handleRestore}   />
-            <TrafficLight color="yellow" title="Expand"   onClick={handleRestore}   />
-            <TrafficLight color="green"  title="Maximise" onClick={handleToggleMax} />
+            <TrafficLight color="red"    onClick={handleRestore}   />
+            <TrafficLight color="yellow" onClick={handleRestore}   />
+            <TrafficLight color="green"  onClick={handleToggleMax} />
           </div>
           <BrandGlyph size="sm" />
           <span className="font-display text-sm font-bold text-ink tracking-tight">
@@ -111,21 +107,13 @@ export default function FloatingWindow({ children }) {
           </span>
         </div>
         <div className="drag-region h-full w-8 flex items-center justify-center cursor-grab shrink-0">
-          <svg width="12" height="20" viewBox="0 0 12 20" className="text-neutral-300">
-            <circle cx="3" cy="4"  r="1.5" fill="currentColor" />
-            <circle cx="9" cy="4"  r="1.5" fill="currentColor" />
-            <circle cx="3" cy="10" r="1.5" fill="currentColor" />
-            <circle cx="9" cy="10" r="1.5" fill="currentColor" />
-            <circle cx="3" cy="16" r="1.5" fill="currentColor" />
-            <circle cx="9" cy="16" r="1.5" fill="currentColor" />
-          </svg>
+          <DragDots />
         </div>
       </div>
     )
   }
 
   const isMax = mode === 'maximized'
-
   const windowStyle = isElectron
     ? { inset: 0 }
     : isMax
@@ -137,21 +125,18 @@ export default function FloatingWindow({ children }) {
       className="fixed z-50 flex flex-col bg-canvas border border-neutral-200/80 shadow-elevated overflow-hidden select-none"
       style={windowStyle}
     >
-      {/* ── Title bar ──────────────────────────────────────────────────── */}
+      {/* ── Title bar ────────────────────────────────────────────────── */}
       <div
         className={`flex items-center gap-3 px-4 py-3 bg-white border-b border-neutral-200/80 shrink-0 ${isElectron ? 'drag-region' : ''}`}
         onPointerDown={onTitlePointerDown}
         onPointerMove={onTitlePointerMove}
         onPointerUp={onTitlePointerUp}
       >
-        {/* Traffic lights — must be no-drag so clicks register */}
         <div className="no-drag flex items-center gap-1.5 shrink-0">
-          <TrafficLight color="red"    title="Collapse"                       onClick={handleCompact}   />
-          <TrafficLight color="yellow" title="Collapse"                       onClick={handleCompact}   />
-          <TrafficLight color="green"  title={isMax ? 'Restore' : 'Maximise'} onClick={handleToggleMax} />
+          <TrafficLight color="red"    onClick={handleCompact}   />
+          <TrafficLight color="yellow" onClick={handleCompact}   />
+          <TrafficLight color="green"  onClick={handleToggleMax} />
         </div>
-
-        {/* Brand — draggable centre region */}
         <div className={`flex-1 flex items-center justify-center gap-2 pointer-events-none ${isElectron ? 'drag-region' : ''}`}>
           <BrandGlyph size="md" />
           <span className="font-display text-sm font-bold text-ink tracking-tight">
@@ -161,19 +146,55 @@ export default function FloatingWindow({ children }) {
             Institutional Assistant
           </span>
         </div>
-
         <div className={`w-[62px] shrink-0 ${isElectron ? 'drag-region' : ''}`} />
       </div>
 
-      {/* ── Tab bar ────────────────────────────────────────────────────── */}
-      <TabBar active={activeTab} onChange={setActiveTab} />
+      {/* ── Body: left nav + content ──────────────────────────────────── */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Left sidebar nav */}
+        <aside className="no-drag w-44 shrink-0 flex flex-col bg-white border-r border-neutral-200/80 select-text">
+          <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5 overflow-y-auto">
+            {TABS.map(({ id, label, Icon }) => {
+              const badge = tabBadges[id] ?? 0
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium transition-all w-full text-left ${
+                    activeTab === id
+                      ? 'bg-six-light text-six'
+                      : 'text-neutral-500 hover:text-ink hover:bg-neutral-50'
+                  }`}
+                >
+                  <Icon size={13} className="shrink-0" />
+                  <span className="flex-1">{label}</span>
+                  {badge > 0 && (
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-six px-1 text-[9px] font-bold text-white shadow-six-glow">
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </nav>
 
-      {/* ── Content ────────────────────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 overflow-hidden select-text">
-        {children(activeTab)}
+          {/* User footer */}
+          <div className="px-3 py-3 border-t border-neutral-100 flex items-center gap-2">
+            <div className="h-6 w-6 rounded-full bg-neutral-200 grid place-items-center text-[10px] font-bold text-ink shrink-0">C</div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold text-ink truncate">Cosmina</p>
+              <p className="text-[9px] text-neutral-400 truncate">Compliance Officer</p>
+            </div>
+          </div>
+        </aside>
+
+        {/* Content area */}
+        <div className="no-drag flex-1 min-w-0 flex flex-col overflow-hidden select-text">
+          {children(activeTab, setActiveTab)}
+        </div>
       </div>
 
-      {/* ── Resize grip (browser only) ─────────────────────────────────── */}
+      {/* ── Resize grip ───────────────────────────────────────────────── */}
       {!isElectron && !isMax && (
         <div
           className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize z-10"
@@ -188,49 +209,37 @@ export default function FloatingWindow({ children }) {
   )
 }
 
-function TabBar({ active, onChange }) {
-  return (
-    <div className="no-drag flex items-center gap-0.5 px-4 py-2 bg-white border-b border-neutral-200/80 shrink-0">
-      {TABS.map(({ id, label, Icon }) => (
-        <button
-          key={id}
-          onClick={() => onChange(id)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-            active === id
-              ? 'bg-six-light text-six'
-              : 'text-neutral-400 hover:text-ink hover:bg-neutral-50'
-          }`}
-        >
-          <Icon size={13} />
-          {label}
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function TrafficLight({ color, title, onClick }) {
+function TrafficLight({ color, onClick }) {
   const colors = {
     red:    'bg-[#FF5F57] hover:bg-[#FF3B30] ring-1 ring-black/10',
     yellow: 'bg-[#FFBD2E] hover:bg-[#FFCC00] ring-1 ring-black/10',
     green:  'bg-[#28C840] hover:bg-[#34C759] ring-1 ring-black/10',
   }
   return (
-    <button
-      title={title}
-      onClick={onClick}
-      className={`h-3 w-3 rounded-full transition-all active:scale-90 ${colors[color]}`}
-    />
+    <button onClick={onClick} className={`h-3 w-3 rounded-full transition-all active:scale-90 ${colors[color]}`} />
   )
 }
 
 function BrandGlyph({ size = 'md' }) {
-  const outer = size === 'sm' ? 'h-5 w-5 rounded-[6px]'    : 'h-[22px] w-[22px] rounded-[6px]'
-  const inner = size === 'sm' ? 'h-2 w-2 rounded-[3px]'    : 'h-2.5 w-2.5 rounded-[3px]'
+  const outer = size === 'sm' ? 'h-5 w-5 rounded-[6px]' : 'h-[22px] w-[22px] rounded-[6px]'
+  const inner = size === 'sm' ? 'h-2 w-2 rounded-[3px]' : 'h-2.5 w-2.5 rounded-[3px]'
   return (
     <span className={`grid place-items-center bg-six shadow-six-glow shrink-0 ${outer}`}>
       <span className={`bg-white/90 ${inner}`} />
     </span>
+  )
+}
+
+function DragDots() {
+  return (
+    <svg width="12" height="20" viewBox="0 0 12 20" className="text-neutral-300">
+      <circle cx="3" cy="4"  r="1.5" fill="currentColor" />
+      <circle cx="9" cy="4"  r="1.5" fill="currentColor" />
+      <circle cx="3" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="9" cy="10" r="1.5" fill="currentColor" />
+      <circle cx="3" cy="16" r="1.5" fill="currentColor" />
+      <circle cx="9" cy="16" r="1.5" fill="currentColor" />
+    </svg>
   )
 }
 

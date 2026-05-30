@@ -1,13 +1,30 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import ExpertSpace from './components/ExpertSpace.jsx'
 import ChatPane from './components/ChatPane.jsx'
 import SessionsPane from './components/SessionsPane.jsx'
+import LibraryPane from './components/LibraryPane.jsx'
+import ExpertsPane from './components/ExpertsPane.jsx'
+import GraphPane from './components/GraphPane.jsx'
 import FloatingWindow from './components/FloatingWindow.jsx'
+import ExpertInbox from './components/escalation/ExpertInbox.jsx'
+import ContactExpertModal from './components/ContactExpertModal.jsx'
 import { useSessions } from './hooks/useSessions.js'
 
 export default function App() {
   const [capturedProcedures, setCapturedProcedures] = useState([])
+  const [inboxUnread, setInboxUnread]               = useState(0)
+  const [inboxRefresh, setInboxRefresh]             = useState(0)
+  const [contactExpert, setContactExpert]           = useState(null)
   const { sessions, currentId, currentSession, saveMessages, newChat, loadSession } = useSessions()
+
+  const handleRequestCreated = useCallback(() => {
+    setInboxUnread(n => n + 1)
+    setInboxRefresh(n => n + 1)
+  }, [])
+
+  const handleInboxChanged = useCallback(() => {
+    setInboxRefresh(n => n + 1)
+  }, [])
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -15,38 +32,46 @@ export default function App() {
         <ExpertSpace onWorkflowCaptured={proc => setCapturedProcedures(prev => [proc, ...prev])} />
       </BackgroundShell>
 
-      <FloatingWindow>
-        {(activeTab) => {
+      <FloatingWindow tabBadges={{ inbox: inboxUnread }}>
+        {(activeTab, setActiveTab) => {
           if (activeTab === 'chat') return (
             <ChatPane
               key={currentId}
               capturedProcedures={capturedProcedures}
               initialMessages={currentSession?.messages}
               onMessagesChange={saveMessages}
+              onRequestCreated={handleRequestCreated}
+              onGoToInbox={() => { setInboxUnread(0); setActiveTab('inbox') }}
+              onSelectExpert={setContactExpert}
             />
           )
           if (activeTab === 'sessions') return (
             <SessionsPane
               sessions={sessions}
-              onLoadSession={loadSession}
-              onNewChat={newChat}
+              onLoadSession={s => { loadSession(s); setActiveTab('chat') }}
+              onNewChat={() => { newChat(); setActiveTab('chat') }}
             />
           )
-          if (activeTab === 'library') return (
-            <PlaceholderPane icon="📚" label="Library" sub="Referenced documents will appear here" />
+          if (activeTab === 'library')  return <LibraryPane />
+          if (activeTab === 'experts')  return <ExpertsPane />
+          if (activeTab === 'graph')    return <GraphPane />
+          if (activeTab === 'inbox')    return (
+            <ExpertInbox
+              refreshSignal={inboxRefresh}
+              onChanged={handleInboxChanged}
+            />
           )
         }}
       </FloatingWindow>
-    </div>
-  )
-}
 
-function PlaceholderPane({ icon, label, sub }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-center px-6 gap-2">
-      <span className="text-3xl">{icon}</span>
-      <p className="font-display font-bold text-ink">{label}</p>
-      <p className="text-xs text-neutral-400">{sub}</p>
+      {contactExpert && (
+        <ContactExpertModal
+          expert={contactExpert}
+          onClose={() => setContactExpert(null)}
+          onSubmitted={() => { handleRequestCreated(); setContactExpert(null) }}
+          onGoToInbox={() => { setContactExpert(null); setInboxUnread(0) }}
+        />
+      )}
     </div>
   )
 }

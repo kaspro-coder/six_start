@@ -19,8 +19,7 @@ export default function DocViewer({ cite, onClose }) {
   } else if (hasPage) {
     docUrl = `/api/documents/${encodeURIComponent(cite.document)}/pages/${cite.page}`
   } else {
-    const search = cite.content ? extractSearchPhrase(cite.content) : ''
-    docUrl = `/api/documents/${encodeURIComponent(cite.document)}${search ? `#search=${encodeURIComponent(search)}` : ''}`
+    docUrl = `/api/documents/${encodeURIComponent(cite.document)}`
   }
 
   return (
@@ -84,10 +83,4 @@ export default function DocViewer({ cite, onClose }) {
 
 function cleanName(doc) {
   return String(doc).split('/').pop().replace(/\.(pdf|docx?|txt)$/i, '').replace(/[-_]/g, ' ')
-}
-
-// Pull a short meaningful phrase from the chunk for PDF #search
-function extractSearchPhrase(content) {
-  const sentence = content.replace(/\s+/g, ' ').trim().split(/[.\n]/)[0]
-  return sentence.split(' ').slice(0, 6).join(' ')
 }

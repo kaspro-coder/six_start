@@ -84,3 +84,51 @@ export async function askAgent(question) {
   }
   return res.json()
 }
+
+// ── Knowledge & context engine (specs 09 / 10 / 11) ──────────────────────
+
+async function postJson(path, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText)
+    throw new Error(`Backend error ${res.status}: ${detail}`)
+  }
+  return res.json()
+}
+
+async function getJson(path) {
+  const res = await fetch(`${BASE}${path}`)
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText)
+    throw new Error(`Backend error ${res.status}: ${detail}`)
+  }
+  return res.json()
+}
+
+export function getGroundedAnswer(question, context = {}) {
+  return postJson('/api/answer', { question, context })
+}
+
+export function listExperts() {
+  return getJson('/api/experts')
+}
+
+export function listKnowledge() {
+  return getJson('/api/knowledge')
+}
+
+export function listKnowledgeRequests() {
+  return getJson('/api/knowledge-requests')
+}
+
+export function createKnowledgeRequest(payload) {
+  return postJson('/api/knowledge-requests', payload)
+}
+
+export function resolveKnowledgeRequest(requestId, resolution) {
+  return postJson(`/api/knowledge-requests/${requestId}/resolve`, resolution)
+}

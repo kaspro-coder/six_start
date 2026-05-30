@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import DocViewer from './DocViewer.jsx'
+import GroundedAnswer from './GroundedAnswer.jsx'
+import CreateKnowledgeRequest from './escalation/CreateKnowledgeRequest.jsx'
 import {
   Send, BookOpen, ArrowUpRight, Landmark, UserCheck,
-  FileText, ShieldCheck, Check, Copy, Zap, ClipboardList,
+  FileText, ShieldCheck, Check, Copy, Zap, ClipboardList, User,
 } from 'lucide-react'
-import { askAgent, askSixthSense } from '../lib/api.js'
+import { askAgent, askSixthSense, getGroundedAnswer } from '../lib/api.js'
+import { collectUserContext } from '../lib/context.js'
 
 const DEMO_ANSWER = {
   title: 'Verify SFDR data for Alpen Privatbank',
@@ -30,6 +33,10 @@ const FOLLOW_UPS = [
   'When does an instrument need an onboarding or extension assessment?',
 ]
 
+function isUnavailableAgent(agent) {
+  return !agent?.available || /^SIXth Sense agent unavailable:/i.test(agent?.message || '')
+}
+
 function buildSources(ask) {
   if (!ask?.sources) return []
   const seen = new Set()
@@ -46,12 +53,13 @@ const GREETING = {
   content: "Guten Tag, Cosmina 👋 I'm SIXsens. Ask me how to complete a task and I'll walk you through it using procedures captured from our experts.",
 }
 
-export default function ChatPane({ capturedProcedures = [], initialMessages, onMessagesChange }) {
+export default function ChatPane({ capturedProcedures = [], initialMessages, onMessagesChange, onSelectExpert, onRequestCreated, onGoToInbox }) {
   const [messages,   setMessages]   = useState(initialMessages ?? [GREETING])
   const [input,      setInput]      = useState('')
   const [thinking,   setThinking]   = useState(false)
   const [activeCite, setActiveCite] = useState(null)
   const [splitPct,   setSplitPct]   = useState(50)
+  const [escalation, setEscalation] = useState(null)
   const scrollRef  = useRef(null)
   const dividerRef = useRef(null)
   const isEmpty = messages.length === 1 && !thinking
@@ -97,23 +105,38 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   async function submit(text) {
     const question = (text ?? input).trim()
     if (!question) return
+    const recentQueries = messages.filter(m => m.role === 'user').map(m => m.content)
     setMessages(m => [...m, { role: 'user', kind: 'text', content: question }])
     setInput('')
     setThinking(true)
+
+    // Primary path: knowledge & context engine (specs 09/10/11)
+    try {
+      const context = collectUserContext({ recentQueries })
+      const grounded = await getGroundedAnswer(question, context)
+      if (grounded && grounded.engine !== 'unavailable') {
+        setMessages(m => [...m, { role: 'assistant', kind: 'grounded', content: grounded }])
+        setThinking(false)
+        return
+      }
+    } catch {
+      // fall through to legacy path
+    }
+
+    // Fallback: Phase-2 agent → RAG → local demo
     try {
       const [agentR, askR] = await Promise.allSettled([askAgent(question), askSixthSense(question)])
       const agent = agentR.status === 'fulfilled' ? agentR.value : null
       const ask   = askR.status   === 'fulfilled' ? askR.value   : null
       const sources = buildSources(ask)
 
-      // Merge chunk content into sources so the doc viewer can show the excerpt
       const enrichedSources = sources.map(s => {
         const chunks = [...(ask?.official_rules ?? []), ...(ask?.expert_workflow_context ?? [])]
         const match = chunks.find((_, i) => i + 1 === s.index)
-        return { ...s, content: match?.page_content ?? null }
+        return { ...s, content: match?.content ?? null }
       })
 
-      if (agent?.available && agent.message) {
+      if (!isUnavailableAgent(agent) && agent.message) {
         setMessages(m => [...m, { role: 'assistant', kind: 'agent', content: { ...agent, sources: enrichedSources } }])
       } else if (ask?.engine === 'rag' && ask.answer) {
         setMessages(m => [...m, { role: 'assistant', kind: 'rag', content: { ...ask, sources: enrichedSources } }])
@@ -139,7 +162,16 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
           <EmptyState onPick={submit} />
         ) : (
           <>
-            {messages.map((m, i) => <Message key={i} message={m} onAsk={submit} onCiteClick={handleCiteClick} />)}
+            {messages.map((m, i) => (
+              <Message
+                key={i}
+                message={m}
+                onAsk={submit}
+                onCiteClick={handleCiteClick}
+                onSelectExpert={onSelectExpert}
+                onEscalate={setEscalation}
+              />
+            ))}
             {thinking && <Thinking />}
           </>
         )}
@@ -183,6 +215,15 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
           </div>
         </>
       )}
+
+      {escalation && (
+        <CreateKnowledgeRequest
+          escalation={escalation}
+          onClose={() => setEscalation(null)}
+          onSubmitted={() => { onRequestCreated?.() }}
+          onGoToInbox={() => { setEscalation(null); onGoToInbox?.() }}
+        />
+      )}
     </div>
   )
 }
@@ -214,8 +255,9 @@ function EmptyState({ onPick }) {
   )
 }
 
-function Message({ message, onAsk, onCiteClick }) {
+function Message({ message, onAsk, onCiteClick, onSelectExpert, onEscalate }) {
   const isUser = message.role === 'user'
+  const wide   = message.kind === 'grounded'
   return (
     <div className={`flex gap-2.5 animate-fade-up ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center shadow-sm ${isUser ? 'bg-neutral-200' : 'bg-six'}`}>
@@ -223,8 +265,9 @@ function Message({ message, onAsk, onCiteClick }) {
           ? <span className="text-[10px] font-bold text-ink">C</span>
           : <span className="h-1.5 w-1.5 rounded-[2px] bg-white/90" />}
       </div>
-      <div className={`max-w-[85%] ${isUser ? 'text-right' : ''}`}>
-        {message.kind === 'agent'     && <AgentAnswer data={message.content} onAsk={onAsk} onCiteClick={onCiteClick} />}
+      <div className={`${wide ? 'flex-1 min-w-0' : 'max-w-[85%]'} ${isUser ? 'text-right' : ''}`}>
+        {message.kind === 'grounded'  && <GroundedAnswer data={message.content} onAsk={onAsk} onCiteClick={onCiteClick} onSelectExpert={onSelectExpert} onEscalate={onEscalate} />}
+        {message.kind === 'agent'     && <AgentAnswer data={message.content} onAsk={onAsk} onCiteClick={onCiteClick} onSelectExpert={onSelectExpert} />}
         {message.kind === 'rag'       && <RagAnswer   data={message.content} onAsk={onAsk} onCiteClick={onCiteClick} />}
         {message.kind === 'procedure' && <Procedure   data={message.content} />}
         {message.kind === 'text'      && (
@@ -265,9 +308,34 @@ function parseMessage(message) {
   return { lead: lead.join(' '), bullets }
 }
 
-function AgentAnswer({ data, onAsk, onCiteClick }) {
+function buildAgentSources(data) {
+  if (Array.isArray(data.sources) && data.sources.length) return data.sources
+  return (data.document_citations ?? []).map(citation => {
+    const pageMatch = String(citation.page_or_line ?? '').match(/page\s+(\d+)/i)
+    const page = pageMatch ? Number(pageMatch[1]) - 1 : null
+    return {
+      index: citation.id,
+      source_type: 'official_rulebook',
+      document: citation.source_file,
+      page,
+      content: citation.relevant_quote,
+    }
+  })
+}
+
+function InlineCitations({ text, sources, onCiteClick }) {
+  return String(text ?? '').split(/(\[\d+\])/g).map((part, i) => {
+    const m = part.match(/^\[(\d+)\]$/)
+    if (!m) return <span key={i}>{part}</span>
+    const n = Number(m[1])
+    return <Cite key={i} n={n} source={sources.find(s => s.index === n)} onClick={onCiteClick} />
+  })
+}
+
+function AgentAnswer({ data, onAsk, onCiteClick, onSelectExpert }) {
   const { lead, bullets } = parseMessage(data.message)
-  const sources = Array.isArray(data.sources) ? data.sources : []
+  const sources = buildAgentSources(data)
+  const expertCitations = Array.isArray(data.expert_citations) ? data.expert_citations : []
   const hasBpo = data.requires_bpo_action && data.bpo_draft_form
   return (
     <div className="relative inline-block text-left bg-white rounded-2xl rounded-tl-md px-4 py-3 border border-neutral-200/80 shadow-card overflow-hidden">
@@ -279,22 +347,60 @@ function AgentAnswer({ data, onAsk, onCiteClick }) {
         <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">SIXth Sense</span>
         <span className="text-[10px] text-neutral-400">compliance co-pilot</span>
       </div>
-      {lead && <p className="text-xs text-ink mb-2 leading-relaxed">{lead}</p>}
+      {lead && (
+        <p className="text-xs text-ink mb-2 leading-relaxed">
+          <InlineCitations text={lead} sources={sources} onCiteClick={onCiteClick} />
+        </p>
+      )}
       {bullets.length > 0 ? (
         <ul className="space-y-1.5">
           {bullets.map((b, i) => (
             <li key={i} className="flex gap-2 text-xs text-ink leading-relaxed">
               <span className="mt-[5px] h-1.5 w-1.5 rounded-full bg-six shrink-0" />
-              <span>{b}</span>
+              <span><InlineCitations text={b} sources={sources} onCiteClick={onCiteClick} /></span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="text-xs text-ink whitespace-pre-wrap leading-relaxed">{data.message}</p>
+        <p className="text-xs text-ink whitespace-pre-wrap leading-relaxed">
+          <InlineCitations text={data.message} sources={sources} onCiteClick={onCiteClick} />
+        </p>
       )}
       <SourceChips sources={sources} onCiteClick={onCiteClick} />
+      <ExpertCards experts={expertCitations} onSelectExpert={onSelectExpert} />
       {hasBpo && <BpoActionCard form={data.bpo_draft_form} />}
       <NextSteps onAsk={onAsk} form={hasBpo ? data.bpo_draft_form : null} />
+    </div>
+  )
+}
+
+function ExpertCards({ experts, onSelectExpert }) {
+  if (!experts?.length) return null
+  return (
+    <div className="mt-3 border-t border-neutral-100 pt-2.5">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">Knowledge Experts</span>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {experts.map(expert => (
+          <article key={expert.id ?? expert.email} className="w-full max-w-[230px] rounded-xl border border-six/25 bg-six-light/60 p-3">
+            <div className="flex items-start gap-2">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-six text-white">
+                <User size={15} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-bold text-ink">{expert.expert_name}</p>
+                <p className="truncate text-[10px] text-neutral-500">{expert.role_title}</p>
+              </div>
+            </div>
+            <button
+              className="mt-3 w-full rounded-lg bg-six px-3 py-1.5 text-[10px] font-bold text-white shadow-six-glow transition-colors hover:bg-six-dark"
+              onClick={() => onSelectExpert?.(expert)}
+              type="button"
+            >
+              Contact Expert
+            </button>
+          </article>
+        ))}
+      </div>
     </div>
   )
 }
@@ -337,8 +443,10 @@ function RagAnswer({ data, onAsk, onCiteClick }) {
 function Cite({ n, source, onClick }) {
   return (
     <button
-      onClick={() => onClick?.(source)}
-      className="ml-0.5 font-mono text-[10px] font-semibold text-six hover:underline active:opacity-70"
+      onClick={() => source && onClick?.(source)}
+      disabled={!source}
+      type="button"
+      className="ml-0.5 align-super font-mono text-[10px] font-semibold text-six hover:underline active:opacity-70 disabled:cursor-default disabled:opacity-60"
     >
       [{n}]
     </button>
