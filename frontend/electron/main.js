@@ -12,11 +12,11 @@ function createWindow() {
     width: NORMAL_BOUNDS.width,
     height: NORMAL_BOUNDS.height,
     frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
+    transparent: false,
+    backgroundColor: '#F7F5F3',
     alwaysOnTop: true,
     resizable: true,
-    skipTaskbar: true,
+    skipTaskbar: false,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -26,6 +26,17 @@ function createWindow() {
   })
 
   win.setAlwaysOnTop(true, 'floating')
+
+  // Show the window once the page is ready. The global hotkey (Ctrl+Space)
+  // can't be grabbed under Wayland, so without this the window stays hidden.
+  const reveal = () => {
+    if (!win.isVisible()) {
+      win.show()
+      win.focus()
+    }
+  }
+  win.once('ready-to-show', reveal)
+  win.webContents.once('did-finish-load', reveal)
 
   if (!app.isPackaged) {
     win.loadURL(process.env.ELECTRON_START_URL || 'http://localhost:5173')

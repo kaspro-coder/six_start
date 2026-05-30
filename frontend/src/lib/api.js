@@ -109,8 +109,8 @@ async function getJson(path) {
   return res.json()
 }
 
-export function getGroundedAnswer(question, context = {}) {
-  return postJson('/api/answer', { question, context })
+export function getGroundedAnswer(question, context = {}, mode = 'default') {
+  return postJson('/api/answer', { question, context, mode })
 }
 
 export function listExperts() {

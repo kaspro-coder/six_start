@@ -1,10 +1,69 @@
-import { useState, useEffect } from 'react'
-import { FileText, Landmark, UserCheck, Search, X } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { FileText, Search, Eye, Download } from 'lucide-react'
 import DocViewer from './DocViewer.jsx'
+
+// Nicer display titles for the known corpus files (fallback cleans the rest).
+const TITLES = {
+  'Confidential_SIX_master-data-openining-and-mutations-facsheet.pdf': 'Master Data Opening & Mutations Factsheet',
+  'EU-MiIFID_six-infographics-mifid-II-reference-data-en.pdf': 'MiFID II Reference Data — Infographic',
+  'EU_ESG_jc_2021_50_-_final_report_on_taxonomy-related_product_disclosure_rts.pdf': 'Taxonomy-Related Product Disclosure RTS',
+  'EU_MIFIR_CELEX_32014R0600_EN_TXT.pdf': 'MiFIR — Regulation (EU) 600/2014',
+  'EU_MiFID_2015-1787_-_guidelines_on_complex_debt_instruments_and_structured_deposits.pdf': 'Guidelines — Complex Debt Instruments & Structured Deposits',
+  'EU_MiFID_CELEX_32014L0065_EN_TXT.pdf': 'MiFID II — Directive 2014/65/EU',
+  'EU_MiFID_esma35-43-620_guidelines_on_mifid_ii_product_governance_requirements_0.pdf': 'Guidelines — MiFID II Product Governance',
+  'EU_SFDR_CELEX_32019R2088_EN_TXT.pdf': 'SFDR — Regulation (EU) 2088/2019',
+  'EU_SFDR_jc_2021_03_joint_esas_final_report_on_rts_under_sfdr.pdf': 'Joint ESAs Final Report on RTS under SFDR',
+  'Product Coverage transcript (1).docx': 'Product Coverage — Expert Transcript',
+  'Regulatory Update transcript.docx': 'Regulatory Update — Expert Transcript',
+  'Start Hack ZH_SIX_Presentation.pdf': 'SIX × START Hack Zurich — Presentation',
+  'US_FATCA.pdf': 'FATCA — US Regulation',
+  'US_six-factsheet-fatca-en.pdf': 'FATCA Factsheet',
+  'six-handbook-regulatory-navigator-en.pdf': 'Regulatory Navigator Handbook',
+  'six-handbook-tax-navigator-en.pdf': 'Tax Navigator Handbook',
+}
+
+function titleOf(name) {
+  if (TITLES[name]) return TITLES[name]
+  return name
+    .replace(/\.(pdf|docx?)$/i, '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function deptOf(name) {
+  const f = name.toLowerCase()
+  if (f.includes('master-data') || f.includes('product coverage')) return 'Reference Data Services'
+  if (f.includes('sfdr') || f.includes('esg') || f.includes('taxonomy')) return 'Sustainable Finance'
+  if (f.includes('mifid') || f.includes('mifir')) return 'Markets & MiFID'
+  if (f.includes('regulatory') || (f.includes('navigator') && !f.includes('tax'))) return 'Regulatory Affairs'
+  if (f.includes('fatca') || f.includes('tax')) return 'Tax & FATCA'
+  if (f.includes('presentation') || f.includes('start hack')) return 'Innovation'
+  return 'General'
+}
+
+function typeOf(name, sourceType) {
+  const f = name.toLowerCase()
+  if (f.includes('facsheet') || f.includes('factsheet')) return 'Factsheet'
+  if (f.includes('infographic')) return 'Infographic'
+  if (f.includes('handbook') || f.includes('navigator')) return 'Handbook'
+  if (f.includes('guidelines')) return 'Guidelines'
+  if (f.includes('transcript')) return 'Expert Note'
+  if (f.includes('presentation')) return 'Presentation'
+  if (f.includes('report') || f.includes('rts')) return 'Report'
+  if (f.includes('celex') || f.includes('directive')) return 'Regulation'
+  if (sourceType === 'tacit_expert_knowledge') return 'Expert Note'
+  return 'Document'
+}
+
+const GRID = 'grid grid-cols-[minmax(0,1fr)_180px_150px_120px_44px_76px] items-center gap-3'
 
 export default function LibraryPane() {
   const [docs, setDocs]       = useState([])
   const [query, setQuery]     = useState('')
+  const [dept, setDept]       = useState('All')
+  const [type, setType]       = useState('All')
   const [loading, setLoading] = useState(true)
   const [cite, setCite]       = useState(null)
 
@@ -15,108 +74,155 @@ export default function LibraryPane() {
       .catch(() => setLoading(false))
   }, [])
 
-  const filtered = docs.filter(d =>
-    d.filename.toLowerCase().includes(query.toLowerCase())
+  // Enrich each doc with derived display fields.
+  const rows = useMemo(() => docs.map(d => ({
+    ...d,
+    title: titleOf(d.filename),
+    dept: deptOf(d.filename),
+    type: typeOf(d.filename, d.source_type),
+  })), [docs])
+
+  const depts = useMemo(() => ['All', ...Array.from(new Set(rows.map(r => r.dept))).sort()], [rows])
+  const types = useMemo(() => ['All', ...Array.from(new Set(rows.map(r => r.type))).sort()], [rows])
+
+  const filtered = rows.filter(r =>
+    (r.title.toLowerCase().includes(query.toLowerCase()) || r.filename.toLowerCase().includes(query.toLowerCase())) &&
+    (dept === 'All' || r.dept === dept) &&
+    (type === 'All' || r.type === type)
   )
 
-  const official = filtered.filter(d => d.source_type === 'official_rulebook')
-  const expert   = filtered.filter(d => d.source_type === 'tacit_expert_knowledge')
+  // Keep the last cite mounted so the preview can slide out with content intact.
+  const open = !!cite
+  const lastRef = useRef(null)
+  if (cite) lastRef.current = cite
+  const shownCite = cite ?? lastRef.current
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden">
-      {/* ── Document list ─────────────────────────────────────────── */}
-      <div className={`flex flex-col flex-1 min-w-0 overflow-hidden transition-all ${cite ? 'max-w-[420px]' : ''}`}>
-        {/* Header */}
-        <div className="px-6 pt-6 pb-4 shrink-0 border-b border-neutral-100">
-          <h1 className="font-display font-bold text-ink text-base mb-3">Knowledge Library</h1>
-          <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+    <div className="relative flex flex-col flex-1 min-h-0 overflow-hidden bg-canvas">
+      {/* Search + filters */}
+      <div className="px-6 pt-6 pb-4 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
             <input
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search documents…"
-              className="w-full rounded-lg border border-neutral-200 bg-neutral-50/60 pl-8 pr-3 py-1.5 text-xs outline-none transition-shadow focus:bg-white focus:border-six focus:ring-4 focus:ring-six/10"
+              className="w-full rounded-xl border border-neutral-200 bg-white pl-9 pr-3 py-2.5 text-sm outline-none transition-shadow focus:border-six focus:ring-4 focus:ring-six/10"
             />
           </div>
-        </div>
-
-        {/* Lists */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
-          {loading && (
-            <p className="text-xs text-neutral-400 text-center py-8">Loading…</p>
-          )}
-
-          {!loading && filtered.length === 0 && (
-            <p className="text-xs text-neutral-400 text-center py-8">No documents found.</p>
-          )}
-
-          {official.length > 0 && (
-            <section>
-              <div className="flex items-center gap-1.5 mb-2">
-                <Landmark size={11} className="text-neutral-400" />
-                <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">Official Rulebook</p>
-              </div>
-              <div className="space-y-1.5">
-                {official.map(doc => (
-                  <DocCard key={doc.filename} doc={doc} onOpen={setCite} active={cite?.document === doc.filename} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {expert.length > 0 && (
-            <section>
-              <div className="flex items-center gap-1.5 mb-2">
-                <UserCheck size={11} className="text-six" />
-                <p className="text-[10px] font-bold uppercase tracking-widest text-six">Expert Knowledge</p>
-              </div>
-              <div className="space-y-1.5">
-                {expert.map(doc => (
-                  <DocCard key={doc.filename} doc={doc} onOpen={setCite} active={cite?.document === doc.filename} />
-                ))}
-              </div>
-            </section>
-          )}
+          <FilterSelect value={dept} onChange={setDept} options={depts} />
+          <FilterSelect value={type} onChange={setType} options={types} />
         </div>
       </div>
 
-      {/* ── Document viewer ───────────────────────────────────────── */}
-      {cite && (
-        <div className="w-[520px] shrink-0 flex flex-col overflow-hidden border-l border-neutral-200/80">
-          <DocViewer cite={cite} onClose={() => setCite(null)} />
+      {/* Table */}
+      <div className="flex-1 overflow-y-auto px-6 pb-6">
+        <div className="rounded-2xl border border-neutral-200/80 bg-white overflow-hidden shadow-card">
+          <div className="overflow-x-auto">
+            <div className="min-w-[880px]">
+              {/* Column headers */}
+              <div className={`${GRID} px-5 py-3.5 border-b border-neutral-100 text-[10px] font-bold uppercase tracking-widest text-neutral-400`}>
+                <span>Document</span>
+                <span>Dept</span>
+                <span>Type</span>
+                <span>Updated</span>
+                <span className="text-right">P.</span>
+                <span />
+              </div>
+
+              {loading && <p className="px-5 py-10 text-center text-xs text-neutral-400">Loading…</p>}
+              {!loading && filtered.length === 0 && (
+                <p className="px-5 py-10 text-center text-xs text-neutral-400">No documents found.</p>
+              )}
+
+              {filtered.map(doc => (
+                <DocRow
+                  key={doc.filename}
+                  doc={doc}
+                  active={cite?.document === doc.filename}
+                  onOpen={() => setCite({ document: doc.filename, source_type: doc.source_type, content: null, page: null })}
+                />
+              ))}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Preview drawer (slides in from the right) */}
+      <div
+        onClick={() => setCite(null)}
+        className={`absolute inset-0 bg-black/20 transition-opacity duration-300 ${
+          open ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      />
+      <aside
+        className={`absolute inset-y-0 right-0 z-10 w-[540px] max-w-[94%] flex flex-col bg-white border-l border-neutral-200/80 shadow-elevated transition-transform duration-300 ease-out ${
+          open ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        {shownCite && <DocViewer cite={shownCite} onClose={() => setCite(null)} />}
+      </aside>
     </div>
   )
 }
 
-function DocCard({ doc, onOpen, active }) {
-  const isExpert = doc.source_type === 'tacit_expert_knowledge'
-  const label    = doc.filename.replace(/\.(pdf|docx?)$/i, '').replace(/[-_]/g, ' ')
-
+function FilterSelect({ value, onChange, options }) {
   return (
-    <button
-      onClick={() => onOpen({ document: doc.filename, source_type: doc.source_type, content: null, page: null })}
-      className={`w-full text-left flex items-start gap-3 px-3 py-2.5 rounded-xl border transition-all ${
-        active
-          ? 'border-six/30 bg-six-light shadow-none'
-          : 'border-neutral-200/70 bg-white hover:border-six/20 hover:bg-neutral-50 shadow-card'
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      className="shrink-0 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-600 outline-none transition-shadow focus:border-six focus:ring-4 focus:ring-six/10 cursor-pointer"
+    >
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  )
+}
+
+function DocRow({ doc, active, onOpen }) {
+  return (
+    <div
+      onClick={onOpen}
+      className={`${GRID} px-5 py-3 border-b border-neutral-100/70 last:border-0 cursor-pointer transition-colors ${
+        active ? 'bg-six-light' : 'hover:bg-neutral-50'
       }`}
     >
-      <div className={`mt-0.5 shrink-0 h-7 w-7 rounded-lg grid place-items-center ${
-        isExpert ? 'bg-six-light' : 'bg-neutral-100'
-      }`}>
-        {isExpert
-          ? <UserCheck size={13} className="text-six" />
-          : <Landmark size={13} className="text-neutral-500" />
-        }
+      <div className="flex items-center gap-2.5 min-w-0">
+        <FileText size={15} className="shrink-0 text-neutral-300" />
+        <span className="truncate text-sm font-semibold text-ink">{doc.title}</span>
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-ink leading-snug line-clamp-2">{label}</p>
-        <p className="text-[10px] text-neutral-400 mt-0.5 uppercase tracking-wide">
-          {doc.file_type} · {doc.size_kb} KB
-        </p>
-      </div>
-    </button>
+
+      <span>
+        <span className="inline-flex items-center rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-medium text-neutral-500">
+          {doc.dept}
+        </span>
+      </span>
+
+      <span className="text-sm text-neutral-500">{doc.type}</span>
+
+      <span className="font-mono text-xs text-neutral-400">{doc.updated ?? '—'}</span>
+
+      <span className="text-right text-xs tabular-nums text-neutral-400">{doc.pages ?? '—'}</span>
+
+      <span className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          title="Preview"
+          onClick={e => { e.stopPropagation(); onOpen() }}
+          className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-six"
+        >
+          <Eye size={15} />
+        </button>
+        <a
+          href={`/api/documents/${encodeURIComponent(doc.filename)}`}
+          download
+          title="Download"
+          onClick={e => e.stopPropagation()}
+          className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-six"
+        >
+          <Download size={15} />
+        </a>
+      </span>
+    </div>
   )
 }

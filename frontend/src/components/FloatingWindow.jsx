@@ -4,7 +4,7 @@ import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximiz
 const TABS = [
   { id: 'chat',     label: 'Assistant',       Icon: MessageSquare },
   { id: 'library',  label: 'Library',         Icon: Library },
-  { id: 'experts',  label: 'Experts',         Icon: Users },
+  { id: 'experts',  label: 'Employees',       Icon: Users },
   { id: 'graph',    label: 'Knowledge Graph', Icon: Network },
   { id: 'inbox',    label: 'Expert Inbox',    Icon: Inbox },
   { id: 'sessions', label: 'Sessions',        Icon: Clock },
@@ -201,13 +201,22 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
             })}
           </nav>
 
-          <div className="px-3 py-3 border-t border-neutral-100 flex items-center gap-2">
-            <div className="h-6 w-6 rounded-full bg-neutral-200 grid place-items-center text-[10px] font-bold text-ink shrink-0">C</div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold text-ink truncate">Cosmina</p>
+          <button
+            type="button"
+            onClick={() => setActiveTab('profile')}
+            title="Open my profile"
+            className={`px-3 py-3 border-t border-neutral-100 flex items-center gap-2 w-full text-left transition-colors ${
+              activeTab === 'profile' ? 'bg-six-light' : 'hover:bg-neutral-50'
+            }`}
+          >
+            <div className={`h-6 w-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 ${
+              activeTab === 'profile' ? 'bg-six text-white' : 'bg-neutral-200 text-ink'
+            }`}>C</div>
+            <div className="min-w-0 flex-1">
+              <p className={`text-[10px] font-semibold truncate ${activeTab === 'profile' ? 'text-six' : 'text-ink'}`}>Cosmina</p>
               <p className="text-[9px] text-neutral-400 truncate">Compliance Officer</p>
             </div>
-          </div>
+          </button>
         </aside>
 
         <div className="no-drag flex-1 min-w-0 flex flex-col overflow-hidden select-text">

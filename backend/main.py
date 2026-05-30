@@ -119,6 +119,7 @@ class QueryRequest(BaseModel):
 class AnswerRequest(BaseModel):
     question: str
     context: dict[str, Any] = Field(default_factory=dict)
+    mode: str = "default"  # "default" | "expert"
 
 
 class NextBestAction(BaseModel):
@@ -328,15 +329,26 @@ def health() -> dict[str, str]:
 def list_documents() -> list[dict]:
     if not SOURCES_DIR.is_dir():
         return []
+    import datetime as _dt
     out = []
     for f in sorted(SOURCES_DIR.iterdir()):
         if f.suffix.lower() not in {".pdf", ".docx"}:
             continue
+        stat = f.stat()
+        pages = None
+        if f.suffix.lower() == ".pdf":
+            try:
+                from pypdf import PdfReader
+                pages = len(PdfReader(str(f)).pages)
+            except Exception:
+                pages = None
         out.append({
             "filename": f.name,
             "file_type": f.suffix.lstrip(".").lower(),
             "source_type": "tacit_expert_knowledge" if f.suffix.lower() == ".docx" else "official_rulebook",
-            "size_kb": round(f.stat().st_size / 1024),
+            "size_kb": round(stat.st_size / 1024),
+            "updated": _dt.date.fromtimestamp(stat.st_mtime).isoformat(),
+            "pages": pages,
         })
     return out
 
@@ -570,15 +582,35 @@ Output JSON: `answer` (the grounded prose, with [n] citations) and `steps` \
 (ordered actions with `text` and `citations`, or empty)."""
 
 
-def _generate_grounded(question: str, ranked: list[dict[str, Any]]) -> "_GroundedDraft":
+MODE_INSTRUCTIONS = {
+    "default": (
+        "RESPONSE MODE: DEFAULT — Write for a non-specialist. Give only the "
+        "conceptual essentials and the necessary steps to act. Omit technical "
+        "jargon, regulation article numbers (unless strictly essential), internal "
+        "field names, and edge-case caveats. Favour plain language and brevity."
+    ),
+    "expert": (
+        "RESPONSE MODE: EXPERT — Write for a domain expert. Include the technical "
+        "detail available in the chunks: exact regulation references, field names, "
+        "ISIN/threshold specifics, conditions, edge cases, and precise operational "
+        "nuance. Be thorough and precise rather than brief."
+    ),
+}
+
+
+def _generate_grounded(
+    question: str, ranked: list[dict[str, Any]], mode: str = "default"
+) -> "_GroundedDraft":
     import anthropic
     context_lines = []
     for i, c in enumerate(ranked, start=1):
         label = f"{c.get('source_type', 'source')} · {c.get('title', '')}"
         context_lines.append(f"[{i}] ({label})\n{(c.get('content') or '').strip()}")
     context_block = "\n\n".join(context_lines)
+    mode_instruction = MODE_INSTRUCTIONS.get(mode, MODE_INSTRUCTIONS["default"])
     user_content = (
-        f"QUESTION:\n{question}\n\nRETRIEVED KNOWLEDGE:\n{context_block}\n\n"
+        f"{mode_instruction}\n\nQUESTION:\n{question}\n\n"
+        f"RETRIEVED KNOWLEDGE:\n{context_block}\n\n"
         "Produce the grounded answer now, citing chunk indices [n]."
     )
     client = anthropic.Anthropic()
@@ -756,7 +788,7 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         display_format = "escalation_needed"
     elif ranked:
         try:
-            draft = _ensure_inline_citations(_generate_grounded(req.question, ranked), ranked)
+            draft = _ensure_inline_citations(_generate_grounded(req.question, ranked, req.mode), ranked)
             engine = "rag"
         except Exception as exc:  # noqa: BLE001
             draft = _ensure_inline_citations(

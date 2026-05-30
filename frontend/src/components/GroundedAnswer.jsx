@@ -124,6 +124,7 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
   const esc = data.escalation
   const isEscalation = data.display_format === 'escalation_needed' || esc?.needed
   const conf = confMeta(data.confidence)
+  const [showExperts, setShowExperts] = useState(false)
 
   return (
     <div className="relative inline-block w-full max-w-[560px] text-left bg-white rounded-2xl rounded-tl-md border border-neutral-200/80 shadow-card overflow-hidden">
@@ -153,11 +154,8 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
         {/* ── Context used ───────────────────────────────────── */}
         <ContextUsed ctx={data.context_used} plan={data.query_plan} />
 
-        {/* ── Sources ────────────────────────────────────────── */}
+        {/* ── Sources (small chips; expand to full card on click) ─ */}
         <SourcePanel sources={sources} onCiteClick={onCiteClick} />
-
-        {/* ── Experts ────────────────────────────────────────── */}
-        {experts.length > 0 && <ExpertPanel experts={experts} onSelectExpert={onSelectExpert} />}
 
         {/* ── Confidence & limitations ───────────────────────── */}
         <ConfidencePanel
@@ -176,6 +174,26 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
           onSelectExpert={onSelectExpert}
           onEscalate={() => onEscalate?.(esc)}
         />
+
+        {/* ── Experts (collapsed; small toggle at bottom-right) ── */}
+        {experts.length > 0 && (
+          <div className="border-t border-neutral-100 pt-2.5">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowExperts(v => !v)}
+                className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                  showExperts
+                    ? 'border-six bg-six-light text-six'
+                    : 'border-neutral-200 bg-neutral-50 text-neutral-500 hover:border-six/50 hover:text-six'
+                }`}
+              >
+                <User size={11} /> Experts ({experts.length})
+              </button>
+            </div>
+            {showExperts && <ExpertCards experts={experts} onSelectExpert={onSelectExpert} />}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -281,22 +299,44 @@ function ContextUsed({ ctx, plan }) {
 }
 
 function SourcePanel({ sources, onCiteClick }) {
-  const [expanded, setExpanded] = useState(false)
+  const [open, setOpen] = useState(() => new Set())
   if (!sources?.length) return null
-  const shown = expanded ? sources : sources.slice(0, 2)
+  const toggle = (idx) => setOpen((prev) => {
+    const next = new Set(prev)
+    if (next.has(idx)) next.delete(idx); else next.add(idx)
+    return next
+  })
   return (
     <div className="border-t border-neutral-100 pt-2.5">
       <SectionLabel>Sources</SectionLabel>
-      <div className="mt-2 space-y-1.5">
-        {shown.map((s) => <SourceCard key={s.index} s={s} onCiteClick={onCiteClick} />)}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {sources.map((s) => {
+          const meta = sourceMeta(s.source_type)
+          const isOpen = open.has(s.index)
+          return (
+            <button
+              key={s.index}
+              type="button"
+              onClick={() => toggle(s.index)}
+              className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] transition-colors ${
+                isOpen
+                  ? 'border-six bg-six-light text-six'
+                  : 'border-neutral-200 bg-neutral-50 text-neutral-600 hover:border-six/50 hover:text-six'
+              }`}
+            >
+              <meta.Icon size={10} className={isOpen ? 'text-six' : 'text-neutral-400'} />
+              <span className="font-mono">[{s.index}]</span>
+              <span className="max-w-[150px] truncate">{s.title || cleanDoc(s.document)}</span>
+            </button>
+          )
+        })}
       </div>
-      {sources.length > 2 && (
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className="mt-1.5 text-[10px] font-semibold text-six hover:underline"
-        >
-          {expanded ? 'Show fewer' : `Show all ${sources.length} sources`}
-        </button>
+      {open.size > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {sources.filter((s) => open.has(s.index)).map((s) => (
+            <SourceCard key={s.index} s={s} onCiteClick={onCiteClick} />
+          ))}
+        </div>
       )}
     </div>
   )
@@ -349,11 +389,9 @@ function SourceCard({ s, onCiteClick }) {
   )
 }
 
-function ExpertPanel({ experts, onSelectExpert }) {
+function ExpertCards({ experts, onSelectExpert }) {
   return (
-    <div className="border-t border-neutral-100 pt-2.5">
-      <SectionLabel>Experts</SectionLabel>
-      <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+    <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
         {experts.map((e) => (
           <article key={e.id ?? e.email} className="rounded-xl border border-six/25 bg-six-light/50 p-2.5">
             <div className="flex items-start gap-2">
@@ -384,7 +422,6 @@ function ExpertPanel({ experts, onSelectExpert }) {
             </button>
           </article>
         ))}
-      </div>
     </div>
   )
 }
