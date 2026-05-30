@@ -6,6 +6,7 @@ import {
   Layers, Building2, Clock, Gauge, BookOpen, MessageSquarePlus, ExternalLink,
   Check, Copy, MapPin,
 } from 'lucide-react'
+import EmployeeCard from './EmployeeCard.jsx'
 
 // ── Visual vocabulary ────────────────────────────────────────────────────
 const SOURCE_META = {
@@ -121,8 +122,10 @@ function SectionLabel({ children }) {
 export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExpert, onEscalate }) {
   const sources = data.document_citations ?? []
   const experts = data.expert_citations ?? []
+  const employees = data.employee_citations ?? []
   const esc = data.escalation
   const isEscalation = data.display_format === 'escalation_needed' || esc?.needed
+  const isZeroKnowledge = data.display_format === 'zero_knowledge' || data.engine === 'zero_knowledge'
   const conf = confMeta(data.confidence)
 
   return (
@@ -142,8 +145,13 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
       </div>
 
       <div className="px-4 py-3 space-y-3">
-        {/* ── Answer ─────────────────────────────────────────── */}
-        <Answer data={data} sources={sources} onCiteClick={onCiteClick} />
+        {isZeroKnowledge
+          ? <ZeroKnowledgeBlock message={data.answer} />
+          : <Answer data={data} sources={sources} onCiteClick={onCiteClick} />}
+
+        {data.expert_unavailable && (
+          <LegacyExpertBanner alternatives={data.suggested_alternatives ?? []} onSelectExpert={onSelectExpert} />
+        )}
 
         {/* ── Escalation block (when routing to an expert) ─────── */}
         {isEscalation && esc && (
@@ -153,11 +161,14 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
         {/* ── Context used ───────────────────────────────────── */}
         <ContextUsed ctx={data.context_used} plan={data.query_plan} />
 
+        <GovernancePanel governance={data.governance} confidenceScore={data.confidence_score} />
+
         {/* ── Sources ────────────────────────────────────────── */}
         <SourcePanel sources={sources} onCiteClick={onCiteClick} />
 
         {/* ── Experts ────────────────────────────────────────── */}
         {experts.length > 0 && <ExpertPanel experts={experts} onSelectExpert={onSelectExpert} />}
+        {employees.length > 0 && <EmployeePanel employees={employees} onSelectExpert={onSelectExpert} />}
 
         {/* ── Confidence & limitations ───────────────────────── */}
         <ConfidencePanel
@@ -203,6 +214,45 @@ function Answer({ data, sources, onCiteClick }) {
           ))}
         </ol>
       )}
+    </div>
+  )
+}
+
+function ZeroKnowledgeBlock({ message }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <ShieldCheck size={13} className="text-neutral-500" />
+        <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-500">Trust boundary</span>
+      </div>
+      <p className="text-xs leading-relaxed text-ink">{message}</p>
+    </div>
+  )
+}
+
+function LegacyExpertBanner({ alternatives, onSelectExpert }) {
+  const first = alternatives?.[0]
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5">
+      <div className="flex items-start gap-2">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-bold text-amber-900">Legacy expert knowledge</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800">
+            This answer may rely on knowledge owned by Jacob, who is marked inactive in the live employee directory.
+            {first ? ` For current assistance, contact ${first.full_name ?? first.expert_name} (${first.role_title}).` : ' No active replacement is currently mapped.'}
+          </p>
+          {first && (
+            <button
+              onClick={() => onSelectExpert?.(first)}
+              className="mt-2 rounded-lg bg-amber-500 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-amber-600"
+              type="button"
+            >
+              Contact active alternative
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -280,6 +330,31 @@ function ContextUsed({ ctx, plan }) {
   )
 }
 
+function GovernancePanel({ governance, confidenceScore }) {
+  if (!governance && confidenceScore == null) return null
+  const score = typeof confidenceScore === 'number' ? `${Math.round(confidenceScore * 100)}%` : 'n/a'
+  return (
+    <div className="border-t border-neutral-100 pt-2.5">
+      <SectionLabel>Trust & governance</SectionLabel>
+      <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+        <GovChip label="Access" value={governance?.access_level ?? 'C2 Internal'} />
+        <GovChip label="Confidence" value={score} />
+        <GovChip label="Evidence" value={`${governance?.evidence_count ?? 0} source(s)`} />
+        <GovChip label="Reuse" value={governance?.reusable ? 'Reusable knowledge' : 'Read-only answer'} />
+      </div>
+    </div>
+  )
+}
+
+function GovChip({ label, value }) {
+  return (
+    <span className="rounded-lg border border-neutral-200 bg-neutral-50 px-2 py-1">
+      <span className="block text-[8px] font-bold uppercase tracking-widest text-neutral-400">{label}</span>
+      <span className="block truncate text-[10px] font-semibold text-ink">{value}</span>
+    </span>
+  )
+}
+
 function SourcePanel({ sources, onCiteClick }) {
   const [expanded, setExpanded] = useState(false)
   if (!sources?.length) return null
@@ -323,6 +398,7 @@ function SourceCard({ s, onCiteClick }) {
             <span className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[9px] font-bold ${trust.cls}`}>{trust.label}</span>
             {s.department && <span className="text-[9px] text-neutral-400">· {s.department}</span>}
             {updated && <span className="inline-flex items-center gap-0.5 text-[9px] text-neutral-400"><Clock size={8} /> {updated}</span>}
+            {s.page_or_line && <span className="text-[9px] font-semibold text-neutral-500">· {s.page_or_line}</span>}
             {typeof s.relevance_score === 'number' && (
               <span className="text-[9px] font-mono text-neutral-400">· {s.relevance_score.toFixed(1)}</span>
             )}
@@ -330,7 +406,7 @@ function SourceCard({ s, onCiteClick }) {
         </div>
       </div>
       {s.relevant_quote && (
-        <blockquote className="mt-1.5 text-[11px] leading-relaxed text-neutral-600 bg-neutral-50 border-l-2 border-six/40 px-2 py-1 rounded-r">
+        <blockquote className="mt-1.5 text-[11px] leading-relaxed text-ink bg-amber-50 border-l-2 border-amber-400 px-2 py-1 rounded-r">
           {s.relevant_quote.slice(0, 180)}{s.relevant_quote.length > 180 ? '…' : ''}
         </blockquote>
       )}
@@ -354,16 +430,23 @@ function ExpertPanel({ experts, onSelectExpert }) {
     <div className="border-t border-neutral-100 pt-2.5">
       <SectionLabel>Experts</SectionLabel>
       <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-        {experts.map((e) => (
-          <article key={e.id ?? e.email} className="rounded-xl border border-six/25 bg-six-light/50 p-2.5">
+        {experts.map((e) => {
+          const active = e.active ?? e.employment_status !== 'former'
+          return (
+          <article key={e.id ?? e.email} className={`rounded-xl border p-2.5 ${active ? 'border-six/25 bg-six-light/50' : 'border-neutral-200 bg-neutral-50'}`}>
             <div className="flex items-start gap-2">
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-six text-white">
+              <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${active ? 'bg-six text-white' : 'bg-neutral-200 text-neutral-500'}`}>
                 <User size={14} />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-bold text-ink">{e.expert_name}</p>
                 <p className="truncate text-[10px] text-neutral-500">{e.role_title}</p>
               </div>
+              {!active && (
+                <span className="shrink-0 rounded bg-neutral-200 px-1 py-0.5 text-[9px] font-bold text-neutral-500">
+                  former
+                </span>
+              )}
               {typeof e.knowledge_score === 'number' && (
                 <span className="shrink-0 rounded bg-white px-1 py-0.5 text-[9px] font-bold text-six">
                   {Math.round(e.knowledge_score * 100)}
@@ -378,11 +461,25 @@ function ExpertPanel({ experts, onSelectExpert }) {
             {e.reason && <p className="mt-1 text-[9px] italic text-neutral-400 line-clamp-2">{e.reason}</p>}
             <button
               onClick={() => onSelectExpert?.(e)}
-              className="mt-2 w-full rounded-lg bg-six px-2 py-1 text-[10px] font-bold text-white shadow-six-glow hover:bg-six-dark transition-colors active:scale-95"
+              disabled={!active}
+              className="mt-2 w-full rounded-lg bg-six px-2 py-1 text-[10px] font-bold text-white shadow-six-glow hover:bg-six-dark disabled:bg-neutral-200 disabled:text-neutral-400 disabled:shadow-none transition-colors active:scale-95"
             >
-              Contact Expert
+              {active ? 'Contact Expert' : 'Legacy knowledge only'}
             </button>
           </article>
+        )})}
+      </div>
+    </div>
+  )
+}
+
+function EmployeePanel({ employees, onSelectExpert }) {
+  return (
+    <div className="border-t border-neutral-100 pt-2.5">
+      <SectionLabel>Employee directory</SectionLabel>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {employees.map(e => (
+          <EmployeeCard key={e.id ?? e.email} employee={e} onSelect={onSelectExpert} />
         ))}
       </div>
     </div>

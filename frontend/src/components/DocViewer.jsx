@@ -33,7 +33,7 @@ export default function DocViewer({ cite, onClose }) {
           </div>
           <p className="text-xs font-semibold text-ink truncate">{cleanName(cite.document)}</p>
           {hasPage && (
-            <p className="text-[10px] text-neutral-400 mt-0.5">Page {cite.page + 1} · showing ±1 page window</p>
+            <p className="text-[10px] text-neutral-400 mt-0.5">Page {cite.page + 1} · exact cited page</p>
           )}
         </div>
         <button
@@ -48,7 +48,7 @@ export default function DocViewer({ cite, onClose }) {
       {cite.content && (
         <div className="px-4 py-3 border-b border-neutral-100 shrink-0">
           <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 mb-1.5">Relevant excerpt</p>
-          <blockquote className="text-xs leading-relaxed text-ink bg-six-light/60 border-l-2 border-six px-3 py-2 rounded-r-lg">
+          <blockquote className="text-xs leading-relaxed text-ink bg-amber-50 border-l-2 border-amber-400 px-3 py-2 rounded-r-lg">
             {cite.content.slice(0, 400)}{cite.content.length > 400 ? '…' : ''}
           </blockquote>
         </div>

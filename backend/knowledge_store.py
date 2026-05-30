@@ -33,6 +33,8 @@ from typing import Any
 DATA_DIR = Path(__file__).resolve().parent / "data"
 REQUESTS_FILE = DATA_DIR / "knowledge_requests.json"
 PERSISTED_FILE = DATA_DIR / "persisted_knowledge.json"
+EMPLOYEES_FILE = DATA_DIR / "active_employees.json"
+DEMO_STATE_FILE = DATA_DIR / "demo_state.json"
 
 # A coarse domain taxonomy used by the planner, ranker and router. Keys are the
 # canonical domain ids; values are the surface terms that map a query/source to
@@ -157,6 +159,27 @@ EXPERTS_BY_ID = {e["id"]: e for e in EXPERTS}
 # ── Seed structured knowledge sources ────────────────────────────────────────
 # type ∈ document | expert_note | resolved_question | policy | runbook | incident
 SEED_KNOWLEDGE: list[dict[str, Any]] = [
+    {
+        "id": "kn_alpen_golden_data",
+        "type": "document",
+        "title": "Golden data sample: Alpen Privatbank Ausgewogene Strategie",
+        "department": "Regulatory Data Services",
+        "owner_expert_ids": ["exp_jacob_keller"],
+        "domains": ["esg_sfdr", "master_data"],
+        "tags": ["golden data", "alpen privatbank", "at0000828553", "sfdr",
+                 "regulatory based", "esg data", "fund"],
+        "content": (
+            "Golden data record for fund Alpen Privatbank Ausgewogene Strategie, "
+            "ISIN AT0000828553: the instrument resolves as a fund in the ESG Data "
+            "sample. The officer should verify SFDR classification, confirm the "
+            "Regulatory Based flag, and check that Principal Adverse Impact "
+            "indicators are populated before sign-off."
+        ),
+        "trust_level": "verified",
+        "updated_at": "2026-05-29T09:00:00+00:00",
+        "source_file": "Start Hack ZH_SIX_Presentation.pdf",
+        "page": 12,
+    },
     {
         "id": "kn_sfdr_runbook",
         "type": "runbook",
@@ -299,6 +322,120 @@ def load_persisted_knowledge() -> list[dict[str, Any]]:
     return _read_json(PERSISTED_FILE, [])
 
 
+def get_demo_state() -> dict[str, Any]:
+    state = _read_json(DEMO_STATE_FILE, {})
+    return {
+        "persona": state.get("persona", "cosmina"),
+        "jacob_status": state.get("jacob_status", "active"),
+    }
+
+
+def set_demo_state(payload: dict[str, Any]) -> dict[str, Any]:
+    current = get_demo_state()
+    if payload.get("persona") in {"cosmina", "expert"}:
+        current["persona"] = payload["persona"]
+    if payload.get("jacob_status") in {"active", "former"}:
+        current["jacob_status"] = payload["jacob_status"]
+    with _lock:
+        _write_json(DEMO_STATE_FILE, current)
+    return current
+
+
+def load_employee_directory() -> list[dict[str, Any]]:
+    employees = _read_json(EMPLOYEES_FILE, [])
+    state = get_demo_state()
+    out: list[dict[str, Any]] = []
+    for employee in employees:
+        item = {**employee}
+        if item.get("id") == "exp_jacob_keller":
+            item["active"] = state["jacob_status"] == "active"
+        item["status"] = "active" if item.get("active") else "former"
+        out.append(item)
+    return out
+
+
+def employee_by_id(employee_id: str | None) -> dict[str, Any] | None:
+    if not employee_id:
+        return None
+    return next((e for e in load_employee_directory() if e.get("id") == employee_id), None)
+
+
+def employee_by_name(name: str | None) -> dict[str, Any] | None:
+    low = (name or "").lower().strip()
+    if not low:
+        return None
+    for employee in load_employee_directory():
+        names = [employee.get("full_name", ""), *employee.get("aliases", [])]
+        if any(low == n.lower() or low in n.lower() for n in names):
+            return employee
+    return None
+
+
+def decorate_expert(expert: dict[str, Any]) -> dict[str, Any]:
+    employee = employee_by_id(expert.get("id"))
+    if not employee:
+        return {**expert, "employment_status": "active"}
+    return {
+        **expert,
+        "email": employee.get("email", expert.get("email")),
+        "role_title": employee.get("role_title", expert.get("role_title")),
+        "department": employee.get("department", expert.get("department")),
+        "expertise_tags": employee.get("expertise_tags", expert.get("expertise_tags", [])),
+        "profile_summary": employee.get("profile_summary"),
+        "employment_status": employee.get("status"),
+        "active": bool(employee.get("active")),
+        "similar_experts": employee.get("similar_experts", []),
+        "worked_with": employee.get("worked_with", []),
+    }
+
+
+def search_people(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    low = (query or "").lower()
+    q_tokens = _tokens(query)
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for employee in load_employee_directory():
+        alias_blob = " ".join([employee.get("full_name", ""), *employee.get("aliases", [])])
+        tag_blob = " ".join(employee.get("expertise_tags", []))
+        dept_role = f"{employee.get('department', '')} {employee.get('role_title', '')}"
+        score = 0.0
+        if any(alias.lower() in low for alias in employee.get("aliases", [])):
+            score += 8.0
+        if employee.get("full_name", "").lower() in low:
+            score += 10.0
+        score += 2.0 * len(q_tokens & _tokens(alias_blob))
+        score += 2.5 * len(q_tokens & _tokens(tag_blob))
+        score += 1.5 * len(q_tokens & _tokens(dept_role))
+        if any(term in low for term in ("who", "person", "employee", "expert", "contact")):
+            score += 0.5
+        if score > 0:
+            ranked.append((score, employee))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    return [p for _score, p in ranked[:limit]]
+
+
+def suggest_alternatives_for_expert(expert_id: str | None, limit: int = 3) -> list[dict[str, Any]]:
+    employee = employee_by_id(expert_id)
+    candidates: list[dict[str, Any]] = []
+    if employee:
+        for sid in employee.get("similar_experts", []):
+            alt = employee_by_id(sid)
+            if alt and alt.get("active"):
+                candidates.append(alt)
+    if len(candidates) < limit and employee:
+        source_tags = set(employee.get("expertise_tags", []))
+        source_dept = employee.get("department")
+        for alt in load_employee_directory():
+            if not alt.get("active") or alt.get("id") == expert_id:
+                continue
+            overlap = source_tags & set(alt.get("expertise_tags", []))
+            if overlap or alt.get("department") == source_dept:
+                candidates.append(alt)
+    seen: dict[str, dict[str, Any]] = {}
+    for c in candidates:
+        seen[c["id"]] = c
+    return list(seen.values())[:limit]
+
+
 def all_knowledge_sources() -> list[dict[str, Any]]:
     """Seed sources + everything persisted through the escalation loop."""
     return [*SEED_KNOWLEDGE, *load_persisted_knowledge()]
@@ -394,6 +531,9 @@ def route_experts(
 
     ranked: list[dict[str, Any]] = []
     for exp in EXPERTS:
+        decorated = decorate_expert(exp)
+        if decorated.get("employment_status") == "former":
+            continue
         tag_tokens = _tokens(" ".join(exp.get("expertise_tags", [])))
         tag_overlap = len(q_tokens & tag_tokens)
         domain_overlap = len(target_domains & set(exp.get("domains", [])))
@@ -426,7 +566,7 @@ def route_experts(
         )
         ranked.append(
             {
-                **exp,
+                **decorated,
                 "match_score": round(score, 3),
                 "reason": _capitalize(
                     "; ".join(reason_bits) + "."
@@ -438,7 +578,8 @@ def route_experts(
     if not ranked:
         # Fall back to the highest-scoring expert overall so the user is never
         # left without someone to talk to.
-        best = max(EXPERTS, key=lambda e: e.get("knowledge_score", 0.0))
+        active = [decorate_expert(e) for e in EXPERTS if decorate_expert(e).get("employment_status") != "former"]
+        best = max(active or [decorate_expert(e) for e in EXPERTS], key=lambda e: e.get("knowledge_score", 0.0))
         ranked = [
             {
                 **best,
@@ -468,6 +609,9 @@ def match_experts_for_query(
     ranked: list[dict[str, Any]] = []
 
     for exp in EXPERTS:
+        decorated = decorate_expert(exp)
+        if decorated.get("employment_status") == "former":
+            continue
         keywords = [*exp.get("keywords", []), *exp.get("expertise_tags", [])]
         keyword_hits = [
             kw for kw in keywords
@@ -499,7 +643,7 @@ def match_experts_for_query(
             reason = "Closest responsible SME"
 
         ranked.append({
-            **exp,
+            **decorated,
             "match_score": round(score, 3),
             "matched_keywords": list(dict.fromkeys(keyword_hits))[:5],
             "matched_domains": sorted(domain_hits | cluster_hits),
@@ -589,7 +733,12 @@ def resolve_request(request_id: str, resolution: dict[str, Any]) -> dict[str, An
                     [*request.get("domain_tags", []), *resolution_record["new_tags"]]
                 )
             )
-            body = resolution_record["detailed_resolution"] or resolution_record["summary_answer"]
+            body = (
+                f"Problem Context: {request.get('question', '')}\n\n"
+                f"Expert Resolution by {expert.get('expert_name', 'the routed expert')}: "
+                f"{resolution_record['summary_answer']}\n\n"
+                f"{resolution_record['detailed_resolution']}"
+            ).strip()
             if resolution_record["steps_taken"]:
                 body += "\n\nSteps taken:\n" + "\n".join(
                     f"- {s}" for s in resolution_record["steps_taken"]
@@ -619,6 +768,7 @@ def resolve_request(request_id: str, resolution: dict[str, Any]) -> dict[str, An
                 "created_at": now,
                 "originating_request_id": request_id,
                 "source_file": None,
+                "related_documents": resolution_record["related_documents"],
             }
             persisted = load_persisted_knowledge()
             persisted.insert(0, knowledge_item)

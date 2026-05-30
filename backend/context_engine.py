@@ -30,6 +30,9 @@ import knowledge_store as ks
 
 # Intent → trigger terms. First match wins (order matters: specific first).
 INTENT_RULES: list[tuple[str, list[str]]] = [
+    ("employee_search", ["who is", "who are", "find employee", "employee profile",
+                         "person in the company", "works on", "worked on",
+                         "who handles", "who manages"]),
     ("find_expert", ["who should i ask", "who do i ask", "who owns", "who is responsible",
                      "contact", "expert", "who can help", "can someone help", "who knows"]),
     ("resolve_incident", ["incident", "exception", "failed", "broken", "stuck",
@@ -115,7 +118,7 @@ def plan_query(query: str, context: dict[str, Any] | None = None) -> dict[str, A
     required_context: list[str] = []
     if intent == "summarize_document" or "this" in low:
         required_context += ["current_page", "selected_text", "active_document_id"]
-    if intent == "find_expert":
+    if intent in ("find_expert", "employee_search"):
         required_context += ["department"]
     required_context.append("role")
 
@@ -197,7 +200,7 @@ def _structured_chunks(query: str, domains: list[str]) -> list[dict[str, Any]]:
                 "kind": "structured",
                 "title": src["title"],
                 "content": src["content"],
-                "page": None,
+                "page": src.get("page"),
                 "department": src.get("department", "SIX"),
                 "owner_expert_ids": src.get("owner_expert_ids", []),
                 "tags": src.get("tags", []),
@@ -265,6 +268,12 @@ def rank_chunks(
         ownership = 1.0 if c.get("owner_expert_ids") else 0.0
         ctx_domain_hit = bool(ctx_domains & set(c.get("domains", [])))
         dept_hit = bool(ctx_dept and c.get("department") == ctx_dept)
+        process_fit = 0.0
+        if plan.get("detected_intent") == "explain_process":
+            if c.get("source_type") in {"runbook", "expert_resolution", "tacit_expert_knowledge"}:
+                process_fit = 12.0
+            elif c.get("source_type") == "document":
+                process_fit = -5.0
 
         score = (
             kw
@@ -275,7 +284,12 @@ def rank_chunks(
             + 0.8 * ownership
             + (1.0 if ctx_domain_hit else 0.0)
             + (0.5 if dept_hit else 0.0)
+            + process_fit
         )
+
+        has_signal = bool(matched_terms or domain_hit or ctx_domain_hit)
+        if not has_signal:
+            continue
 
         ranked.append(
             {
@@ -293,7 +307,7 @@ def rank_chunks(
     # Drop chunks with no signal at all (negative or zero) unless we'd otherwise
     # return nothing.
     positive = [c for c in ranked if c["relevance_score"] > 0]
-    return (positive or ranked)[:limit]
+    return positive[:limit]
 
 
 def _explain(

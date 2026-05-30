@@ -162,6 +162,7 @@ function ResolutionLogger({ request, onResolved }) {
   const [detailed, setDetailed] = useState('')
   const [steps, setSteps] = useState([''])
   const [tags, setTags] = useState((request.domain_tags ?? []).join(', '))
+  const [attachedDoc, setAttachedDoc] = useState('')
   const [confidence, setConfidence] = useState('high')
   const [reusable, setReusable] = useState(true)
   const [state, setState] = useState('editing') // editing | sending | done | error
@@ -180,6 +181,7 @@ function ResolutionLogger({ request, onResolved }) {
         summary_answer: summary,
         detailed_resolution: detailed,
         steps_taken: steps.map(s => s.trim()).filter(Boolean),
+        related_documents: attachedDoc ? [attachedDoc] : [],
         new_tags: tags.split(',').map(t => t.trim()).filter(Boolean),
         confidence,
         reusable_knowledge_title: request.title,
@@ -246,6 +248,15 @@ function ResolutionLogger({ request, onResolved }) {
           </div>
         </Labeled>
       </div>
+
+      <Labeled label="Attach supporting document (mock)">
+        <input
+          value={attachedDoc}
+          onChange={e => setAttachedDoc(e.target.value)}
+          placeholder="e.g. client-email-summary.pdf"
+          className={inputCls}
+        />
+      </Labeled>
 
       <label className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 cursor-pointer">
         <input type="checkbox" checked={reusable} onChange={e => setReusable(e.target.checked)} className="accent-six" />

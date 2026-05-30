@@ -131,6 +131,11 @@ def should_escalate(
     if any(p in low for p in ("who should i ask", "who do i ask", "can someone help",
                               "who can help", "new issue", "not documented")):
         reasons.append("the user explicitly asked for a person")
+    if (
+        ("new" in low or "missing" in low or "not covered" in low or "custom" in low)
+        and any(p in low for p in ("structured product", "pai", "attribute", "extension"))
+    ):
+        reasons.append("this is a non-trivial coverage or missing-attribute case")
     if len(confidence.get("limitations", [])) >= 3:
         reasons.append("the answer carries too many limitations")
 

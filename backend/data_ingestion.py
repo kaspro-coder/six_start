@@ -58,6 +58,11 @@ def build_vector_store(documents):
         chunk_overlap=200,
     )
     chunks = text_splitter.split_documents(documents)
+    for chunk in chunks:
+        page = chunk.metadata.get("page")
+        if page is not None:
+            chunk.metadata["page_number"] = int(page) + 1
+        chunk.metadata["exact_snippet"] = " ".join(chunk.page_content.split())[:500]
 
     embeddings = HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,

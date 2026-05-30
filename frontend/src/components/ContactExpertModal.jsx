@@ -15,7 +15,7 @@ const PRIORITY_COLORS = {
 function normalize(expert) {
   return {
     id:         expert.id ?? expert.expert_name,
-    name:       expert.expert_name ?? expert.name,
+    name:       expert.expert_name ?? expert.full_name ?? expert.name,
     role:       expert.role_title  ?? expert.role,
     department: expert.department  ?? '',
     initials:   initials(expert.expert_name ?? expert.name ?? '?'),

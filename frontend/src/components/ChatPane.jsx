@@ -6,7 +6,7 @@ import {
   Send, BookOpen, ArrowUpRight, Landmark, UserCheck,
   FileText, ShieldCheck, Check, Copy, Zap, ClipboardList, User,
 } from 'lucide-react'
-import { askAgent, askSixthSense, findExpertMatches, getGroundedAnswer } from '../lib/api.js'
+import { askAgent, askSixthSense, findExpertMatches, getGroundedAnswer, setDemoState } from '../lib/api.js'
 import { collectUserContext, setActiveScreenContext } from '../lib/context.js'
 
 const DEMO_ANSWER = {
@@ -31,6 +31,14 @@ const STARTERS = [
 const FOLLOW_UPS = [
   'What PAI indicators must be populated before sign-off?',
   'When does an instrument need an onboarding or extension assessment?',
+]
+
+const DEMO_STEPS = [
+  { part: '1A', label: 'Golden data', query: 'What golden data do we have for Alpen Privatbank Ausgewogene Strategie, ISIN AT0000828553?' },
+  { part: '1B', label: 'Captured process', query: 'How do I verify SFDR data for Alpen Privatbank?' },
+  { part: '2', label: 'Find Jacob', query: 'Who is Jacob Keller?' },
+  { part: '3', label: 'Escalate unknown', query: 'How do we validate a new ESG-linked structured product with missing PAI attributes?' },
+  { part: '5', label: 'Trust boundary', query: 'What do we know about Project Helios Alpha owned by Maria Novik?' },
 ]
 
 function isUnavailableAgent(agent) {
@@ -61,6 +69,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   const [splitPct,   setSplitPct]   = useState(50)
   const [escalation, setEscalation] = useState(null)
   const [routingMatches, setRoutingMatches] = useState([])
+  const [jacobFormer, setJacobFormer] = useState(false)
   const screenContextRef = useRef('')
   const scrollRef  = useRef(null)
   const dividerRef = useRef(null)
@@ -219,6 +228,23 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
     })
   }
 
+  async function toggleJacobFormer() {
+    const next = !jacobFormer
+    try {
+      await setDemoState({ jacob_status: next ? 'former' : 'active' })
+      setJacobFormer(next)
+      setMessages(m => [...m, {
+        role: 'assistant',
+        kind: 'text',
+        content: next
+          ? 'Demo state updated: Jacob is now marked as former employee. SIXsens will keep his retained knowledge but route live help to active alternatives.'
+          : 'Demo state updated: Jacob is active again in the employee directory.',
+      }])
+    } catch {
+      setMessages(m => [...m, { role: 'assistant', kind: 'text', content: 'Could not update the demo employee-directory state.' }])
+    }
+  }
+
   return (
     <div className="flex h-full">
       <div className="flex flex-col min-w-0" style={{ width: activeCite ? `${splitPct}%` : '100%', transition: 'width 0.15s' }}>
@@ -234,6 +260,8 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
             onSubmit={submit}
             routingMatches={routingMatches}
             onRoute={openManualRouting}
+            jacobFormer={jacobFormer}
+            onToggleJacob={toggleJacobFormer}
           />
         ) : (
           <>
@@ -255,6 +283,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
       {/* Input */}
       {!isEmpty && (
       <div className="border-t border-neutral-200/70 bg-white p-3 space-y-1.5">
+        <DemoJourney onSubmit={submit} jacobFormer={jacobFormer} onToggleJacob={toggleJacobFormer} compact />
         <form onSubmit={e => { e.preventDefault(); submit() }} className="flex gap-2">
           <input
             value={input}
@@ -306,7 +335,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   )
 }
 
-function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute }) {
+function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobFormer, onToggleJacob }) {
   return (
     <div className="dot-grid flex-1 flex flex-col items-center justify-center text-center px-5 -mx-4">
       <div className="grid h-11 w-11 place-items-center rounded-2xl bg-six shadow-six-glow mb-3">
@@ -316,6 +345,7 @@ function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute }) {
       <p className="mt-1 max-w-xs text-xs leading-relaxed text-neutral-500">
         I'll walk you through it using procedures captured from experts — step by step, with sources.
       </p>
+      <DemoJourney onSubmit={onSubmit} jacobFormer={jacobFormer} onToggleJacob={onToggleJacob} />
       <form
         onSubmit={e => { e.preventDefault(); onSubmit() }}
         className="mt-5 w-full max-w-xl"
@@ -349,6 +379,47 @@ function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute }) {
             <ArrowUpRight size={13} className="shrink-0 text-neutral-300 group-hover:text-six transition-colors" />
           </button>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function DemoJourney({ onSubmit, jacobFormer, onToggleJacob, compact = false }) {
+  return (
+    <div className={compact ? 'flex flex-wrap items-center gap-1.5' : 'mt-4 w-full max-w-xl rounded-2xl border border-neutral-200 bg-white/80 p-2 shadow-card'}>
+      {!compact && (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">Demo journey</span>
+          <button
+            type="button"
+            onClick={onToggleJacob}
+            className={`rounded-full px-2 py-1 text-[10px] font-bold ${jacobFormer ? 'bg-neutral-200 text-neutral-600' : 'bg-emerald-50 text-emerald-700'}`}
+          >
+            Jacob: {jacobFormer ? 'former' : 'active'}
+          </button>
+        </div>
+      )}
+      <div className={compact ? 'flex flex-wrap gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
+        {DEMO_STEPS.map(step => (
+          <button
+            key={step.part}
+            type="button"
+            onClick={() => onSubmit(step.query)}
+            className="rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-left text-[10px] font-semibold text-neutral-600 transition-all hover:border-six hover:text-six"
+            title={step.query}
+          >
+            <span className="mr-1 font-mono text-six">{step.part}</span>{step.label}
+          </button>
+        ))}
+        {compact && (
+          <button
+            type="button"
+            onClick={onToggleJacob}
+            className={`rounded-lg px-2 py-1.5 text-[10px] font-bold ${jacobFormer ? 'bg-neutral-200 text-neutral-600' : 'bg-emerald-50 text-emerald-700'}`}
+          >
+            Jacob {jacobFormer ? 'former' : 'active'}
+          </button>
+        )}
       </div>
     </div>
   )

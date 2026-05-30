@@ -12,8 +12,11 @@ export default function CreateKnowledgeRequest({ escalation, onClose, onSubmitte
   const draft = escalation?.request_draft ?? {}
   const experts = escalation?.experts ?? []
   const [title, setTitle] = useState(draft.title ?? '')
+  const [question, setQuestion] = useState(draft.question ?? '')
+  const [contextSummary, setContextSummary] = useState(draft.context_summary ?? '')
   const [priority, setPriority] = useState(draft.priority ?? 'medium')
   const [notes, setNotes] = useState('')
+  const [attachment, setAttachment] = useState('')
   const [routedId, setRoutedId] = useState(draft.routed_expert_ids?.[0] ?? experts[0]?.id ?? '')
   const [state, setState] = useState('editing') // editing | sending | done | error
   const [result, setResult] = useState(null)
@@ -27,8 +30,10 @@ export default function CreateKnowledgeRequest({ escalation, onClose, onSubmitte
       const payload = {
         ...draft,
         title,
+        question,
+        context_summary: contextSummary,
         priority,
-        notes,
+        notes: [notes, attachment ? `Mock attachment: ${attachment}` : ''].filter(Boolean).join('\n'),
         routed_expert_ids: routedId ? [routedId] : draft.routed_expert_ids ?? [],
       }
       const res = await createKnowledgeRequest(payload)
@@ -69,11 +74,19 @@ export default function CreateKnowledgeRequest({ escalation, onClose, onSubmitte
             </Labeled>
 
             <Labeled label="Question">
-              <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-ink">{draft.question}</p>
+              <textarea
+                value={question}
+                onChange={e => setQuestion(e.target.value)}
+                className={`${inputCls} min-h-16 resize-none`}
+              />
             </Labeled>
 
             <Labeled label="Context summary">
-              <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-relaxed text-neutral-600">{draft.context_summary}</p>
+              <textarea
+                value={contextSummary}
+                onChange={e => setContextSummary(e.target.value)}
+                className={`${inputCls} min-h-20 resize-none text-[11px] leading-relaxed`}
+              />
             </Labeled>
 
             {draft.related_source_ids?.length > 0 && (
@@ -131,6 +144,15 @@ export default function CreateKnowledgeRequest({ escalation, onClose, onSubmitte
                 onChange={e => setNotes(e.target.value)}
                 placeholder="Anything that would help the expert…"
                 className={`${inputCls} min-h-16 resize-none`}
+              />
+            </Labeled>
+
+            <Labeled label="Attach supporting document (mock)">
+              <input
+                value={attachment}
+                onChange={e => setAttachment(e.target.value)}
+                placeholder="e.g. ESG structured product term sheet.pdf"
+                className={inputCls}
               />
             </Labeled>
 

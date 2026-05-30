@@ -142,6 +142,10 @@ class GroundedAnswerResponse(BaseModel):
     query_plan: dict[str, Any] = Field(default_factory=dict)
     document_citations: list[dict[str, Any]] = Field(default_factory=list)
     expert_citations: list[dict[str, Any]] = Field(default_factory=list)
+    employee_citations: list[dict[str, Any]] = Field(default_factory=list)
+    expert_unavailable: bool = False
+    suggested_alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    governance: dict[str, Any] = Field(default_factory=dict)
     source_trace: list[dict[str, Any]] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
     next_best_actions: list[NextBestAction] = Field(default_factory=list)
@@ -175,6 +179,15 @@ class ResolutionPayload(BaseModel):
 
 class ExpertMatchRequest(BaseModel):
     query: str
+
+
+class PeopleSearchRequest(BaseModel):
+    query: str
+
+
+class DemoStateRequest(BaseModel):
+    persona: str | None = None
+    jacob_status: str | None = None
 
 
 # ── rrweb event introspection ────────────────────────────────────────────
@@ -385,7 +398,7 @@ def serve_document_html(filename: str):
 
 @app.get("/api/documents/{filename}/pages/{page}")
 def serve_document_page(filename: str, page: int):
-    """Serve a 3-page window (page-1, page, page+1) around the cited page as a PDF."""
+    """Serve the exact cited PDF page as a one-page preview."""
     path = (SOURCES_DIR / filename).resolve()
     if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -396,11 +409,10 @@ def serve_document_page(filename: str, page: int):
         from pypdf import PdfReader, PdfWriter
         reader = PdfReader(str(path))
         total = len(reader.pages)
-        start = max(0, page - 1)
-        end = min(total - 1, page + 1)
+        if page < 0 or page >= total:
+            raise HTTPException(status_code=404, detail="Page not found")
         writer = PdfWriter()
-        for p in range(start, end + 1):
-            writer.add_page(reader.pages[p])
+        writer.add_page(reader.pages[page])
         buf = io.BytesIO()
         writer.write(buf)
         buf.seek(0)
@@ -559,6 +571,8 @@ Rules:
 inline using bracketed numbers like [1], [2], corresponding exactly to the \
 provided context chunks. \
 Never invent regulations, ISINs, thresholds, field names, or experts.
+  1a. If the retrieved knowledge is empty, do not use outside knowledge. Return \
+a safe refusal and leave steps empty.
   2. If the chunks are thin or only partially cover the question, say so plainly \
 in `answer` and give the best-supported partial guidance — never bluff.
   3. For a process / "how do I" question, fill `steps` with ordered, concrete \
@@ -631,6 +645,8 @@ def _ensure_inline_citations(
 
 def _choose_display_format(plan: dict[str, Any], escalate: bool) -> str:
     intent = plan.get("detected_intent")
+    if escalate:
+        return "escalation_needed"
     if escalate and intent in ("find_expert", "resolve_incident"):
         return "escalation_needed"
     if intent == "find_expert":
@@ -670,14 +686,91 @@ def _expert_citations(ranked: list[dict[str, Any]],
     import knowledge_store as ks
     seen: dict[str, dict[str, Any]] = {}
     for r in routed:
-        seen[r["id"]] = {**r}
+        seen[r["id"]] = ks.decorate_expert(r)
     for c in ranked:
         for eid in c.get("owner_expert_ids", []):
             if eid in seen or eid not in ks.EXPERTS_BY_ID:
                 continue
             exp = ks.EXPERTS_BY_ID[eid]
-            seen[eid] = {**exp, "reason": f"Owns the cited source \"{c.get('title')}\"."}
+            seen[eid] = {
+                **ks.decorate_expert(exp),
+                "reason": f"Owns the cited source \"{c.get('title')}\".",
+            }
     return list(seen.values())
+
+
+def _person_answer(people: list[dict[str, Any]], query: str) -> str:
+    if not people:
+        return (
+            "I could not find a verified employee profile matching this query. "
+            "To avoid inventing company structure, please check the central "
+            "employee directory or submit a general inquiry."
+        )
+    person = people[0]
+    status = "active" if person.get("active") else "former"
+    parts = [
+        f"{person['full_name']} is {status} in the SIX employee directory.",
+        f"Role: {person.get('role_title')} in {person.get('department')}.",
+        f"Email: {person.get('email')}.",
+    ]
+    if person.get("profile_summary"):
+        parts.append(person["profile_summary"])
+    if not person.get("active"):
+        parts.append(
+            "This person is not currently available for direct routing; I can "
+            "suggest active colleagues with related expertise."
+        )
+    return " ".join(parts)
+
+
+def _employee_cards(people: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": p.get("id"),
+            "full_name": p.get("full_name"),
+            "expert_name": p.get("full_name"),
+            "role_title": p.get("role_title"),
+            "department": p.get("department"),
+            "email": p.get("email"),
+            "manager": p.get("manager"),
+            "active": bool(p.get("active")),
+            "employment_status": p.get("status"),
+            "expertise_tags": p.get("expertise_tags", []),
+            "profile_summary": p.get("profile_summary"),
+            "similar_experts": p.get("similar_experts", []),
+        }
+        for p in people
+    ]
+
+
+def _legacy_expert_signal(ranked: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]]]:
+    import knowledge_store as ks
+    alternatives: list[dict[str, Any]] = []
+    unavailable = False
+    for chunk in ranked:
+        for eid in chunk.get("owner_expert_ids", []):
+            employee = ks.employee_by_id(eid)
+            if employee and not employee.get("active"):
+                unavailable = True
+                alternatives.extend(ks.suggest_alternatives_for_expert(eid))
+    seen: dict[str, dict[str, Any]] = {}
+    for alt in alternatives:
+        seen[alt["id"]] = alt
+    return unavailable, _employee_cards(list(seen.values()))
+
+
+def _governance_payload(
+    ranked: list[dict[str, Any]],
+    confidence: dict[str, Any],
+    reusable: bool = False,
+) -> dict[str, Any]:
+    return {
+        "access_level": "C2 Internal",
+        "evidence_count": len(ranked),
+        "confidence_threshold": confidence.get("threshold", 0.6),
+        "reusable": reusable,
+        "source_policy": "Verified SIX knowledge only; unknown topics are refused.",
+    }
 
 
 def _build_next_actions(plan, ranked, doc_citations, expert_citations,
@@ -731,6 +824,53 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 
     context = ce.collect_user_context(req.context)
     plan = ce.plan_query(req.question, context)
+
+    if plan.get("detected_intent") == "employee_search":
+        import knowledge_store as ks
+        people = ks.search_people(req.question, limit=4)
+        confidence = {
+            "level": "high" if people else "low",
+            "reason": "Matched against the SIX employee directory." if people else "No employee directory match.",
+            "limitations": [] if people else ["No verified employee profile matched this query."],
+            "score": 1.0 if people else 0.0,
+            "threshold": 0.6,
+        }
+        employee_cards = _employee_cards(people)
+        alternatives = []
+        if people and not people[0].get("active"):
+            alternatives = _employee_cards(ks.suggest_alternatives_for_expert(people[0].get("id")))
+        return GroundedAnswerResponse(
+            question=req.question,
+            engine="directory" if people else "zero_knowledge",
+            answer=_person_answer(people, req.question),
+            display_format="employee_profile" if people else "zero_knowledge",
+            steps=[],
+            confidence=confidence["level"],
+            confidence_reason=confidence["reason"],
+            confidence_score=confidence["score"],
+            confidence_threshold=confidence["threshold"],
+            context_used={
+                "user_role": context.get("role"),
+                "department": context.get("department"),
+                "target_domains": [],
+                "retrieved_source_count": len(people),
+            },
+            query_plan=plan,
+            employee_citations=employee_cards,
+            expert_citations=employee_cards,
+            expert_unavailable=bool(people and not people[0].get("active")),
+            suggested_alternatives=alternatives,
+            governance=_governance_payload([], confidence, reusable=False),
+            limitations=confidence["limitations"],
+            next_best_actions=[
+                NextBestAction(
+                    label=f"Contact {people[0]['full_name']}",
+                    type="contact_expert",
+                    target_id=people[0]["id"],
+                )
+            ] if people and people[0].get("active") else [],
+        )
+
     chunks = ce.retrieve_knowledge(plan)
     ranked = ce.rank_chunks(chunks, plan, context, limit=6)
 
@@ -744,7 +884,20 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 
     engine = "grounded"
     detail = None
-    if below_threshold:
+    if below_threshold and not ranked:
+        engine = "zero_knowledge"
+        draft = _GroundedDraft(
+            answer=(
+                "I don't have any verified company documentation, employee "
+                "directory record, or logged expert resolution regarding this "
+                "topic. To prevent inaccurate information, I cannot provide an "
+                "answer from SIXsens. Please verify the subject or submit a "
+                "general inquiry."
+            ),
+            steps=[],
+        )
+        display_format = "zero_knowledge"
+    elif below_threshold:
         engine = "escalation_needed"
         draft = _GroundedDraft(
             answer=(
@@ -769,6 +922,18 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 
     document_citations = _citations_from_chunks(ranked)
     expert_citations = _expert_citations(ranked, routed_experts)
+    expert_unavailable, suggested_alternatives = _legacy_expert_signal(ranked)
+    if expert_unavailable:
+        active_ids = {e["id"] for e in suggested_alternatives}
+        for exp in list(expert_citations):
+            if exp.get("employment_status") == "former":
+                continue
+            active_ids.add(exp["id"])
+        if suggested_alternatives:
+            expert_citations = [
+                *expert_citations,
+                *[e for e in suggested_alternatives if e["id"] not in {x.get("id") for x in expert_citations}],
+            ]
     source_trace = [{"source_id": c.get("source_id"), "title": c.get("title"),
                      "reason_used": c.get("reason")} for c in ranked]
     next_actions = _build_next_actions(plan, ranked, document_citations,
@@ -799,6 +964,13 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         confidence_score=confidence.get("score"),
         confidence_threshold=confidence.get("threshold"),
         document_citations=document_citations, expert_citations=expert_citations,
+        expert_unavailable=expert_unavailable,
+        suggested_alternatives=suggested_alternatives,
+        governance=_governance_payload(
+            ranked,
+            confidence,
+            reusable=any(c.get("source_type") == "expert_resolution" for c in ranked),
+        ),
         source_trace=source_trace, limitations=confidence["limitations"],
         next_best_actions=next_actions, escalation=escalation_out, detail=detail,
     )
@@ -807,7 +979,31 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
 @app.get("/api/experts")
 def list_experts() -> dict[str, Any]:
     import knowledge_store as ks
-    return {"experts": ks.EXPERTS}
+    return {"experts": [ks.decorate_expert(e) for e in ks.EXPERTS]}
+
+
+@app.post("/api/people/search")
+def people_search(payload: PeopleSearchRequest) -> dict[str, Any]:
+    import knowledge_store as ks
+    people = ks.search_people(payload.query, limit=5)
+    return {
+        "query": payload.query,
+        "people": _employee_cards(people),
+        "answer": _person_answer(people, payload.query),
+        "confidence": "high" if people else "low",
+    }
+
+
+@app.get("/api/demo/state")
+def get_demo_state() -> dict[str, Any]:
+    import knowledge_store as ks
+    return {"state": ks.get_demo_state()}
+
+
+@app.post("/api/demo/state")
+def set_demo_state(payload: DemoStateRequest) -> dict[str, Any]:
+    import knowledge_store as ks
+    return {"state": ks.set_demo_state(payload.model_dump(exclude_none=True))}
 
 
 @app.post("/api/expert-matches")

@@ -121,6 +121,18 @@ export function findExpertMatches(query) {
   return postJson('/api/expert-matches', { query })
 }
 
+export function searchPeople(query) {
+  return postJson('/api/people/search', { query })
+}
+
+export function getDemoState() {
+  return getJson('/api/demo/state')
+}
+
+export function setDemoState(payload) {
+  return postJson('/api/demo/state', payload)
+}
+
 export function listKnowledge() {
   return getJson('/api/knowledge')
 }
