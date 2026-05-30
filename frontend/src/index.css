@@ -52,3 +52,7 @@ body {
 .scroll-slim::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Electron window drag regions — must be real CSS classes, not inline styles */
+.drag-region  { -webkit-app-region: drag;    }
+.no-drag      { -webkit-app-region: no-drag; }
