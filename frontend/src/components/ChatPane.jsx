@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import DocViewer from './DocViewer.jsx'
 import {
   Send, BookOpen, ArrowUpRight, Landmark, UserCheck,
   FileText, ShieldCheck, Check, Copy, Zap, ClipboardList,
@@ -40,20 +41,50 @@ function buildSources(ask) {
   }).slice(0, 6)
 }
 
-export default function ChatPane({ capturedProcedures = [], onCiteClick }) {
-  const GREETING = {
-    role: 'assistant', kind: 'text',
-    content: "Guten Tag, Cosmina 👋 I'm SIXsens. Ask me how to complete a task and I'll walk you through it using procedures captured from our experts.",
-  }
-  const [messages, setMessages] = useState([GREETING])
-  const [input, setInput] = useState('')
-  const [thinking, setThinking] = useState(false)
-  const scrollRef = useRef(null)
+const GREETING = {
+  role: 'assistant', kind: 'text',
+  content: "Guten Tag, Cosmina 👋 I'm SIXsens. Ask me how to complete a task and I'll walk you through it using procedures captured from our experts.",
+}
+
+export default function ChatPane({ capturedProcedures = [], initialMessages, onMessagesChange }) {
+  const [messages,   setMessages]   = useState(initialMessages ?? [GREETING])
+  const [input,      setInput]      = useState('')
+  const [thinking,   setThinking]   = useState(false)
+  const [activeCite, setActiveCite] = useState(null)
+  const [splitPct,   setSplitPct]   = useState(50)
+  const scrollRef  = useRef(null)
+  const dividerRef = useRef(null)
   const isEmpty = messages.length === 1 && !thinking
+
+  const handleCiteClick = useCallback((source) => {
+    setActiveCite(prev => prev?.index === source?.index ? null : source)
+  }, [])
+
+  // Drag to resize split
+  function onDividerPointerDown(e) {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const container = e.currentTarget.parentElement
+    function onMove(ev) {
+      const rect = container.getBoundingClientRect()
+      const pct = Math.min(80, Math.max(20, ((ev.clientX - rect.left) / rect.width) * 100))
+      setSplitPct(pct)
+    }
+    function onUp() {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, thinking])
+
+  // Persist messages to session history on every update
+  useEffect(() => {
+    onMessagesChange?.(messages)
+  }, [messages])
 
   function answerFor(question) {
     const q = question.toLowerCase()
@@ -75,10 +106,17 @@ export default function ChatPane({ capturedProcedures = [], onCiteClick }) {
       const ask   = askR.status   === 'fulfilled' ? askR.value   : null
       const sources = buildSources(ask)
 
+      // Merge chunk content into sources so the doc viewer can show the excerpt
+      const enrichedSources = sources.map(s => {
+        const chunks = [...(ask?.official_rules ?? []), ...(ask?.expert_workflow_context ?? [])]
+        const match = chunks.find((_, i) => i + 1 === s.index)
+        return { ...s, content: match?.page_content ?? null }
+      })
+
       if (agent?.available && agent.message) {
-        setMessages(m => [...m, { role: 'assistant', kind: 'agent', content: { ...agent, sources } }])
+        setMessages(m => [...m, { role: 'assistant', kind: 'agent', content: { ...agent, sources: enrichedSources } }])
       } else if (ask?.engine === 'rag' && ask.answer) {
-        setMessages(m => [...m, { role: 'assistant', kind: 'rag', content: ask }])
+        setMessages(m => [...m, { role: 'assistant', kind: 'rag', content: { ...ask, sources: enrichedSources } }])
       } else {
         setMessages(m => [...m, answerFor(question)])
       }
@@ -90,7 +128,8 @@ export default function ChatPane({ capturedProcedures = [], onCiteClick }) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
+      <div className="flex flex-col min-w-0" style={{ width: activeCite ? `${splitPct}%` : '100%', transition: 'width 0.15s' }}>
       {/* Messages */}
       <div
         ref={scrollRef}
@@ -100,7 +139,7 @@ export default function ChatPane({ capturedProcedures = [], onCiteClick }) {
           <EmptyState onPick={submit} />
         ) : (
           <>
-            {messages.map((m, i) => <Message key={i} message={m} onAsk={submit} onCiteClick={onCiteClick} />)}
+            {messages.map((m, i) => <Message key={i} message={m} onAsk={submit} onCiteClick={handleCiteClick} />)}
             {thinking && <Thinking />}
           </>
         )}
@@ -129,6 +168,21 @@ export default function ChatPane({ capturedProcedures = [], onCiteClick }) {
           </p>
         </div>
       </div>
+      </div>
+
+      {activeCite && (
+        <>
+          {/* Drag handle */}
+          <div
+            ref={dividerRef}
+            className="w-1 bg-neutral-200 hover:bg-six cursor-col-resize shrink-0 transition-colors"
+            onPointerDown={onDividerPointerDown}
+          />
+          <div className="min-w-0 h-full" style={{ width: `${100 - splitPct}%` }}>
+            <DocViewer cite={activeCite} onClose={() => setActiveCite(null)} />
+          </div>
+        </>
+      )}
     </div>
   )
 }

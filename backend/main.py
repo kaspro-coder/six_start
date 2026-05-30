@@ -12,10 +12,12 @@ Two capabilities:
     call, and engine="unavailable" if the vector store itself isn't built.
 """
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 try:  # load backend/.env (e.g. ANTHROPIC_API_KEY) if python-dotenv is present
@@ -247,9 +249,18 @@ def _generate_answer(
 
 
 # ── Routes ───────────────────────────────────────────────────────────────
+SOURCES_DIR = Path(__file__).parent / "SIX_Git_Sources"
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+@app.get("/api/documents/{filename}")
+def serve_document(filename: str):
+    path = (SOURCES_DIR / filename).resolve()
+    if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    return FileResponse(path)
 
 
 @app.post("/api/process-workflow", response_model=WorkflowResponse)

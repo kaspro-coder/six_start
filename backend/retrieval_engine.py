@@ -10,7 +10,7 @@ except ImportError:
 
 
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
-EMBEDDING_MODEL_KWARGS = {"local_files_only": True}
+EMBEDDING_MODEL_KWARGS = {"local_files_only": False}
 CHROMA_DB_DIR = "./chroma_db"
 
 

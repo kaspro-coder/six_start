@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import ExpertSpace from './components/ExpertSpace.jsx'
 import ChatPane from './components/ChatPane.jsx'
+import SessionsPane from './components/SessionsPane.jsx'
 import FloatingWindow from './components/FloatingWindow.jsx'
+import { useSessions } from './hooks/useSessions.js'
 
 export default function App() {
   const [capturedProcedures, setCapturedProcedures] = useState([])
+  const { sessions, currentId, currentSession, saveMessages, newChat, loadSession } = useSessions()
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -14,9 +17,24 @@ export default function App() {
 
       <FloatingWindow>
         {(activeTab) => {
-          if (activeTab === 'chat')     return <ChatPane capturedProcedures={capturedProcedures} />
-          if (activeTab === 'sessions') return <PlaceholderPane icon="🕒" label="Sessions" sub="Past conversations will appear here" />
-          if (activeTab === 'library')  return <PlaceholderPane icon="📚" label="Library" sub="Referenced documents will appear here" />
+          if (activeTab === 'chat') return (
+            <ChatPane
+              key={currentId}
+              capturedProcedures={capturedProcedures}
+              initialMessages={currentSession?.messages}
+              onMessagesChange={saveMessages}
+            />
+          )
+          if (activeTab === 'sessions') return (
+            <SessionsPane
+              sessions={sessions}
+              onLoadSession={loadSession}
+              onNewChat={newChat}
+            />
+          )
+          if (activeTab === 'library') return (
+            <PlaceholderPane icon="📚" label="Library" sub="Referenced documents will appear here" />
+          )
         }}
       </FloatingWindow>
     </div>
