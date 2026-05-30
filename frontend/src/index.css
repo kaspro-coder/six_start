@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Hanken+Grotesk:wght@600;700;800&family=JetBrains+Mono:wght@500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply font-sans antialiased;
+  /* Set brand colours directly via theme() rather than @apply — the warm
+     canvas + ink are config-defined, and theme() resolves them reliably in
+     the base layer (the same reason `color` is set this way). */
+  background-color: theme('colors.canvas');
+  color: theme('colors.ink.DEFAULT');
+  text-rendering: optimizeLegibility;
+}
+
+/* Tighten optical tracking on display text — the brand reads more confident. */
+.tracking-display {
+  letter-spacing: -0.02em;
+}
+
+::selection {
+  background: theme('colors.six.light');
+  color: theme('colors.six.dark');
+}
+
+/* A whisper-faint dot grid for empty/hero canvases — gives the void texture
+   without a "gradient slop" background. Used behind the chat empty state. */
+.dot-grid {
+  background-image: radial-gradient(rgba(26, 26, 26, 0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Thin neutral scrollbar for the chat / event panels */
+.scroll-slim::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-slim::-webkit-scrollbar-thumb {
+  @apply bg-neutral-300 rounded-full;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
+}

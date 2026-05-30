@@ -1,0 +1,36 @@
+# ── API (always required) ────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+
+# ── Dual-context retrieval engine (RAG) ───────────────────────────────────
+# Needed for /api/ask (retrieval_engine.py + data_ingestion.py). Heavy — pulls
+# in torch via sentence-transformers. The API runs without these installed;
+# /api/ask just reports the engine as "unavailable" until they're present.
+langchain==0.3.13
+langchain-community==0.3.13
+langchain-chroma==0.1.4
+langchain-huggingface==0.1.2
+langchain-text-splitters==0.3.4
+# Transitive deps pinned to the set that satisfies langchain-chroma 0.1.4
+# AND langchain-anthropic 0.3.22 (below) together. langchain-core 0.3.86 and
+# langchain 0.3.13 declare mutually exclusive langsmith ranges, so a fresh
+# install prints a harmless `pip check` warning about langsmith — the pinned
+# versions are verified to run (retrieval + agent.py both work).
+langchain-core==0.3.86
+langsmith==0.2.11
+chromadb==0.5.23
+sentence-transformers==3.3.1
+pypdf==5.1.0          # PyPDFLoader — explicit_rulebook (PDF) sources
+docx2txt==0.8         # Docx2txtLoader — tacit_expert_knowledge (DOCX) sources
+
+# ── LLM generation (/api/ask synthesis) ──────────────────────────────────
+# Needs ANTHROPIC_API_KEY at runtime; /api/ask falls back to retrieval-only
+# (returns the raw chunks) when the key or this SDK is absent.
+anthropic>=0.69
+python-dotenv>=1.0   # loads backend/.env so ANTHROPIC_API_KEY needn't be exported
+
+# ── Phase-2 agent (agent.py — action-routing generation via LangChain) ────
+# Pinned to the 0.3 line: 0.4+ pulls langchain-core 1.x, which breaks
+# langchain-chroma 0.1.4 above. Needs ANTHROPIC_API_KEY (+ optional ANTHROPIC_MODEL).
+langchain-anthropic==0.3.22

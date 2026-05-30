@@ -1,0 +1,380 @@
+"""
+SIXsens backend.
+
+Two capabilities:
+  • /api/process-workflow — task mining. Receives an rrweb event payload
+    captured from an expert's workflow and "parses" it (a deterministic mock
+    standing in for an LLM) into a structured, step-by-step procedure.
+  • /api/ask — dual-context RAG. Retrieves official-rulebook + tacit-expert
+    chunks (retrieval_engine.py), then has Claude synthesize a grounded,
+    cited, step-by-step procedure (engine="rag"). Degrades gracefully: returns
+    the raw chunks (engine="retrieval") if no ANTHROPIC_API_KEY / SDK / model
+    call, and engine="unavailable" if the vector store itself isn't built.
+"""
+
+from typing import Any
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+try:  # load backend/.env (e.g. ANTHROPIC_API_KEY) if python-dotenv is present
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+app = FastAPI(title="SIXsens API", version="0.1.0")
+
+# Allow the Vite dev server to call us directly (in addition to the proxy).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ── Schemas ──────────────────────────────────────────────────────────────
+class WorkflowPayload(BaseModel):
+    events: list[Any] = Field(default_factory=list, description="Raw rrweb events")
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class Procedure(BaseModel):
+    title: str
+    source: str
+    steps: list[str]
+
+
+class WorkflowResponse(BaseModel):
+    procedure: Procedure
+    event_count: int
+
+
+class RetrievedChunk(BaseModel):
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+class Source(BaseModel):
+    """A retrieved chunk, labelled by index so the answer can cite it as [n]."""
+    index: int
+    source_type: str  # "official_rulebook" | "tacit_expert_knowledge"
+    document: str  # filename the chunk came from
+
+
+class AnswerStep(BaseModel):
+    text: str
+    citations: list[int] = Field(default_factory=list)  # source indices this step rests on
+
+
+class GeneratedAnswer(BaseModel):
+    """Structured procedure synthesized by Claude — matches the frontend's shape."""
+    title: str
+    summary: str
+    steps: list[AnswerStep]
+
+
+class AskResponse(BaseModel):
+    question: str
+    engine: str  # "rag" (retrieval+LLM) | "retrieval" (chunks only) | "unavailable"
+    answer: GeneratedAnswer | None = None  # populated only when engine == "rag"
+    sources: list[Source] = Field(default_factory=list)
+    official_rules: list[RetrievedChunk] = Field(default_factory=list)
+    expert_workflow_context: list[RetrievedChunk] = Field(default_factory=list)
+    detail: str | None = None  # populated when generation/engine is degraded
+
+
+class AgentResponse(BaseModel):
+    """Phase-2 agent output (agent.generate_sixth_sense_response).
+
+    `available` is False (with `detail`) when the agent can't run — no
+    ANTHROPIC_API_KEY, missing langchain-anthropic, or no vector store — so the
+    frontend can fall back to the local demo instead of erroring.
+    """
+    question: str
+    available: bool
+    message: str | None = None
+    requires_bpo_action: bool = False
+    bpo_draft_form: dict[str, Any] | None = None
+    detail: str | None = None
+
+
+# ── rrweb event introspection ────────────────────────────────────────────
+# rrweb event types: 0=DomContentLoaded, 1=Load, 2=FullSnapshot,
+# 3=IncrementalSnapshot, 4=Meta, 5=Custom, 6=Plugin.
+# IncrementalSnapshot sources: 2=MouseInteraction, 5=Input, etc.
+def _extract_inputs(events: list[Any]) -> list[str]:
+    """Pull human-readable input texts out of rrweb incremental snapshots."""
+    texts: list[str] = []
+    for ev in events:
+        if not isinstance(ev, dict) or ev.get("type") != 3:
+            continue
+        data = ev.get("data", {})
+        if data.get("source") == 5 and data.get("text"):  # 5 == Input
+            texts.append(str(data["text"]))
+    return texts
+
+
+def _summarize(payload: WorkflowPayload) -> Procedure:
+    """
+    Stand-in for an LLM. In production this prompt-engineers the rrweb trace
+    plus the DOM snapshot into a clean SOP. Here we synthesize a sensible
+    procedure, biased by any form metadata the frontend sent along.
+    """
+    form = payload.meta.get("form", {}) if isinstance(payload.meta, dict) else {}
+    isin = form.get("isin") or "AT0000828553"
+    counterparty = form.get("counterparty") or "Alpen Privatbank"
+    article = form.get("sfdrArticle") or "Article 8"
+    regulatory = form.get("regulatoryBased") or "Yes"
+    expert = payload.meta.get("expert", "the expert")
+
+    captured_inputs = _extract_inputs(payload.events)
+    input_note = (
+        f" (captured live values: {', '.join(captured_inputs[:3])})"
+        if captured_inputs
+        else ""
+    )
+
+    steps = [
+        f"Open the Master Data Opening screen and search for the counterparty \"{counterparty}\".",
+        f"Enter the instrument ISIN {isin} in the ISIN field{input_note}.",
+        f"Open the ESG Data panel and set the SFDR classification to {article}.",
+        f"Verify that \"Regulatory Based\" is set to {regulatory} to confirm a regulated data source.",
+        "Cross-check the PAI indicators are populated, then mark the record as Verified and save.",
+    ]
+
+    return Procedure(
+        title=f"Verify SFDR data for {counterparty}",
+        source=f"Reconstructed from {expert}'s captured workflow · Master Data Opening",
+        steps=steps,
+    )
+
+
+# ── LLM generation (RAG synthesis) ───────────────────────────────────────
+# The system prompt is the tuned, stable instruction set — this is the lever
+# we actually have for quality (Claude has no API-side weight fine-tuning).
+# It's marked cacheable; prompt caching kicks in once it exceeds the model's
+# minimum cacheable prefix (~4096 tokens on Opus), and is harmless below that.
+GENERATION_MODEL = "claude-opus-4-8"
+
+SIXSENS_SYSTEM_PROMPT = """\
+You are SIXsens, a compliance assistant for SIX (the Swiss financial-market \
+infrastructure: reference data, ESG/regulatory data, securities services). \
+Your user is a junior compliance officer who needs to complete a concrete task \
+correctly and defensibly. You answer by turning retrieved knowledge into a \
+clear, auditable, step-by-step procedure.
+
+You are given two kinds of retrieved context, each chunk labelled [n]:
+  • OFFICIAL RULEBOOK — authoritative regulation and SIX documentation (SFDR, \
+MiFID/MiFIR, FATCA, master-data factsheets). Use this for *what the rule is* \
+and *what must be true*.
+  • EXPERT WORKFLOW — transcripts of how an experienced SME actually handles \
+the case in practice. Use this for *how it is done here*, judgement calls, and \
+the steps an expert takes that aren't written in any rulebook.
+
+Rules you must follow:
+  1. Ground every claim in the provided context. Cite the supporting chunk \
+indices on each step via the `citations` field. Do not invent regulations, \
+article numbers, ISINs, thresholds, or system field names that aren't in the \
+context.
+  2. Prefer official rulebook chunks for regulatory assertions and expert \
+chunks for procedural / "how we actually do it" steps. Where they reinforce \
+each other, cite both.
+  3. If the context is thin or doesn't cover the question, say so plainly in \
+`summary`, give the best-supported partial steps you can, and flag what the \
+officer should confirm with an SME — never paper over a gap with a guess.
+  4. Keep steps concrete and ordered: each step is one action the officer can \
+take. Be concise; this is an operational procedure, not an essay.
+
+Output a JSON object with: `title` (short task title), `summary` (1–3 \
+sentences framing the task and any caveats), and `steps` (ordered actions, \
+each with `text` and `citations` — the [n] indices it relies on)."""
+
+
+def _generate_answer(
+    question: str,
+    sources: list["Source"],
+    official: list["RetrievedChunk"],
+    expert: list["RetrievedChunk"],
+) -> "GeneratedAnswer":
+    """Synthesize a grounded, cited procedure from the retrieved chunks via Claude.
+
+    Raises on any failure (no SDK, no API key, API error) so the caller can
+    degrade to retrieval-only.
+    """
+    import anthropic
+
+    # Build the labelled context block the system prompt refers to as [n].
+    ordered = [("official_rulebook", c) for c in official] + [
+        ("tacit_expert_knowledge", c) for c in expert
+    ]
+    context_lines = []
+    for src, (_stype, chunk) in zip(sources, ordered):
+        context_lines.append(
+            f"[{src.index}] ({src.source_type} · {src.document})\n{chunk.content.strip()}"
+        )
+    context_block = "\n\n".join(context_lines)
+
+    user_content = (
+        f"QUESTION:\n{question}\n\n"
+        f"RETRIEVED CONTEXT:\n{context_block}\n\n"
+        "Produce the grounded step-by-step procedure now, citing chunk indices."
+    )
+
+    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
+    response = client.messages.parse(
+        model=GENERATION_MODEL,
+        max_tokens=4000,
+        thinking={"type": "adaptive"},
+        system=[
+            {
+                "type": "text",
+                "text": SIXSENS_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": user_content}],
+        output_format=GeneratedAnswer,
+    )
+    return response.parsed_output
+
+
+# ── Routes ───────────────────────────────────────────────────────────────
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/api/process-workflow", response_model=WorkflowResponse)
+def process_workflow(payload: WorkflowPayload) -> WorkflowResponse:
+    """Mock-process a captured rrweb session into a structured procedure."""
+    procedure = _summarize(payload)
+    return WorkflowResponse(procedure=procedure, event_count=len(payload.events))
+
+
+@app.post("/api/ask", response_model=AskResponse)
+def ask(req: AskRequest) -> AskResponse:
+    """
+    Answer an employee question with the dual-context retrieval engine
+    (retrieval_engine.query_sixth_sense): official rulebook chunks + tacit
+    expert-workflow chunks.
+
+    The engine and its vector store are imported lazily so the rest of the API
+    keeps working before the RAG stack is installed/initialized. Two failure
+    modes degrade gracefully instead of 500-ing:
+      • dependencies not installed (langchain / chromadb / sentence-transformers)
+      • installed but no vector store yet (run data_ingestion.py to build it)
+    """
+    try:
+        from retrieval_engine import query_sixth_sense
+    except Exception as exc:  # noqa: BLE001 — any import-time failure is "not ready"
+        return AskResponse(
+            question=req.question,
+            engine="unavailable",
+            detail=f"Retrieval engine dependencies not installed: {exc}",
+        )
+
+    try:
+        results = query_sixth_sense(req.question)
+    except Exception as exc:  # noqa: BLE001 — missing model cache or chroma_db
+        return AskResponse(
+            question=req.question,
+            engine="unavailable",
+            detail=(
+                "Retrieval engine is installed but not initialized — build the "
+                f"vector store first (python data_ingestion.py). ({exc})"
+            ),
+        )
+
+    def to_chunks(docs: Any) -> list[RetrievedChunk]:
+        return [
+            RetrievedChunk(content=d.page_content, metadata=dict(d.metadata))
+            for d in docs
+        ]
+
+    official = to_chunks(results.get("official_rules", []))
+    expert = to_chunks(results.get("expert_workflow_context", []))
+
+    # Label every chunk [1..N] so the generated answer can cite it.
+    sources: list[Source] = []
+    idx = 1
+    for stype, chunks in (("official_rulebook", official), ("tacit_expert_knowledge", expert)):
+        for c in chunks:
+            doc = str(c.metadata.get("source", "?")).rsplit("/", 1)[-1]
+            sources.append(Source(index=idx, source_type=stype, document=doc))
+            idx += 1
+
+    # Synthesize a grounded answer with Claude. If the SDK isn't installed, no
+    # API key is set, or the call fails, fall back to retrieval-only so the
+    # endpoint still returns the chunks rather than 500-ing.
+    answer: GeneratedAnswer | None = None
+    engine = "retrieval"
+    detail: str | None = None
+    if sources:
+        try:
+            answer = _generate_answer(req.question, sources, official, expert)
+            engine = "rag"
+        except Exception as exc:  # noqa: BLE001 — missing key / SDK / API error
+            detail = f"LLM generation unavailable, returning retrieval only: {exc}"
+
+    return AskResponse(
+        question=req.question,
+        engine=engine,
+        answer=answer,
+        sources=sources,
+        official_rules=official,
+        expert_workflow_context=expert,
+        detail=detail,
+    )
+
+
+@app.post("/api/agent", response_model=AgentResponse)
+def agent_answer(req: AskRequest) -> AgentResponse:
+    """
+    Answer via the Phase-2 agent (agent.generate_sixth_sense_response): a
+    LangChain + Claude pipeline that retrieves dual-context, applies the
+    expert "Walter's Workflow" protocols, and returns guidance plus an
+    action-routing decision and a pre-filled BPO draft form.
+
+    Imported lazily and degraded gracefully — `available: false` with a
+    `detail` when the agent can't run, so the Employee Space falls back to its
+    local demo rather than 500-ing.
+    """
+    try:
+        from agent import generate_sixth_sense_response
+    except Exception as exc:  # noqa: BLE001 — missing langchain-anthropic etc.
+        return AgentResponse(
+            question=req.question,
+            available=False,
+            detail=f"Phase-2 agent unavailable (dependency/import): {exc}",
+        )
+
+    try:
+        result = generate_sixth_sense_response(req.question)
+    except Exception as exc:  # noqa: BLE001 — no API key, no vector store, parse error
+        return AgentResponse(
+            question=req.question,
+            available=False,
+            detail=f"Phase-2 agent could not generate a response: {exc}",
+        )
+
+    return AgentResponse(
+        question=req.question,
+        available=True,
+        message=result.get("message"),
+        requires_bpo_action=bool(result.get("requires_bpo_action", False)),
+        bpo_draft_form=result.get("bpo_draft_form"),
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
