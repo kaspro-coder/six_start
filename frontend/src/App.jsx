@@ -9,9 +9,11 @@ import ProfilePane from './components/ProfilePane.jsx'
 import FloatingWindow from './components/FloatingWindow.jsx'
 import ExpertInbox from './components/escalation/ExpertInbox.jsx'
 import ContactExpertModal from './components/ContactExpertModal.jsx'
+import Login from './components/Login.jsx'
 import { useSessions } from './hooks/useSessions.js'
 
 export default function App() {
+  const [currentUser, setCurrentUser]               = useState(null)
   const [capturedProcedures, setCapturedProcedures] = useState([])
   const [inboxUnread, setInboxUnread]               = useState(0)
   const [inboxRefresh, setInboxRefresh]             = useState(0)
@@ -27,13 +29,20 @@ export default function App() {
     setInboxRefresh(n => n + 1)
   }, [])
 
+  // All hooks are above this line — only return after them (Rules of Hooks).
+  if (!currentUser) return <Login onLogin={setCurrentUser} />
+
   return (
     <div className="min-h-screen bg-canvas">
       <BackgroundShell>
         <ExpertSpace onWorkflowCaptured={proc => setCapturedProcedures(prev => [proc, ...prev])} />
       </BackgroundShell>
 
-      <FloatingWindow tabBadges={{ inbox: inboxUnread }}>
+      <FloatingWindow
+        user={currentUser}
+        onLogout={() => setCurrentUser(null)}
+        tabBadges={{ inbox: inboxUnread }}
+      >
         {(activeTab, setActiveTab) => {
           if (activeTab === 'chat') return (
             <ChatPane

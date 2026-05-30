@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximize2 } from 'lucide-react'
+import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximize2, LogOut } from 'lucide-react'
 
 const TABS = [
   { id: 'chat',     label: 'Assistant',       Icon: MessageSquare },
   { id: 'library',  label: 'Library',         Icon: Library },
   { id: 'experts',  label: 'Employees',       Icon: Users },
   { id: 'graph',    label: 'Knowledge Graph', Icon: Network },
-  { id: 'inbox',    label: 'Expert Inbox',    Icon: Inbox },
+  { id: 'inbox',    label: 'Expert Inbox',    Icon: Inbox, expertOnly: true },
   { id: 'sessions', label: 'Sessions',        Icon: Clock },
 ]
 
@@ -26,11 +26,17 @@ function getDefaultPos() {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
-export default function FloatingWindow({ children, tabBadges = {} }) {
+export default function FloatingWindow({ children, tabBadges = {}, user, onLogout }) {
   const [mode, setMode] = useState('windowed')
   const [pos, setPos] = useState(getDefaultPos)
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const [activeTab, setActiveTab] = useState('chat')
+
+  // Experts get the Expert Inbox; everyone else doesn't.
+  const tabs = TABS.filter(t => !t.expertOnly || user?.isExpert)
+  const visibleIds = new Set(tabs.map(t => t.id))
+  // Children may ask to navigate (e.g. "go to inbox"); ignore hidden tabs.
+  const goToTab = (id) => { if (visibleIds.has(id)) setActiveTab(id) }
 
   const dragRef = useRef(null)
   const resizeRef = useRef(null)
@@ -176,7 +182,7 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <aside className="no-drag w-44 shrink-0 flex flex-col bg-white border-r border-neutral-200/80 select-text">
           <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5 overflow-y-auto">
-            {TABS.map(({ id, label, Icon }) => {
+            {tabs.map(({ id, label, Icon }) => {
               const badge = tabBadges[id] ?? 0
               return (
                 <button
@@ -201,26 +207,36 @@ export default function FloatingWindow({ children, tabBadges = {} }) {
             })}
           </nav>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('profile')}
-            title="Open my profile"
-            className={`px-3 py-3 border-t border-neutral-100 flex items-center gap-2 w-full text-left transition-colors ${
-              activeTab === 'profile' ? 'bg-six-light' : 'hover:bg-neutral-50'
-            }`}
-          >
-            <div className={`h-6 w-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 ${
-              activeTab === 'profile' ? 'bg-six text-white' : 'bg-neutral-200 text-ink'
-            }`}>C</div>
-            <div className="min-w-0 flex-1">
-              <p className={`text-[10px] font-semibold truncate ${activeTab === 'profile' ? 'text-six' : 'text-ink'}`}>Cosmina</p>
-              <p className="text-[9px] text-neutral-400 truncate">Compliance Officer</p>
-            </div>
-          </button>
+          <div className={`border-t border-neutral-100 flex items-center ${activeTab === 'profile' ? 'bg-six-light' : ''}`}>
+            <button
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              title="Open my profile"
+              className={`flex flex-1 min-w-0 items-center gap-2 px-3 py-3 text-left transition-colors ${
+                activeTab === 'profile' ? '' : 'hover:bg-neutral-50'
+              }`}
+            >
+              <div className={`h-6 w-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 ${
+                activeTab === 'profile' ? 'bg-six text-white' : 'bg-neutral-200 text-ink'
+              }`}>{user?.initials ?? 'C'}</div>
+              <div className="min-w-0 flex-1">
+                <p className={`text-[10px] font-semibold truncate ${activeTab === 'profile' ? 'text-six' : 'text-ink'}`}>{user?.name ?? 'Cosmina'}</p>
+                <p className="text-[9px] text-neutral-400 truncate">{user?.role ?? 'Compliance Officer'}</p>
+              </div>
+            </button>
+            <button
+              type="button"
+              title="Log out"
+              onClick={onLogout}
+              className="mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-ink"
+            >
+              <LogOut size={13} />
+            </button>
+          </div>
         </aside>
 
         <div className="no-drag flex-1 min-w-0 flex flex-col overflow-hidden select-text">
-          {children(activeTab, setActiveTab)}
+          {children(activeTab, goToTab)}
         </div>
       </div>
 
