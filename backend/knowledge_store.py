@@ -3,7 +3,7 @@ SIXsens structured knowledge store (specs 09 + 11).
 
 The Chroma vector store (data_ingestion.py / retrieval_engine.py) holds the raw
 regulatory corpus. This module adds the *structured* knowledge layer the
-Knowledge Copilot reasons over:
+knowledge assistant reasons over:
 
   • EXPERTS        — responsible SMEs with expertise tags, departments, a
                      knowledge score and a "best for" line, used for routing.

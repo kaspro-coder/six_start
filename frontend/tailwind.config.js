@@ -4,12 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        // SIX brand red (Pantone 485 C) + a near-black ink for text/dark
-        // surfaces. Greys come from Tailwind's built-in `neutral` scale.
+        // Light-red brand accent + a near-black ink for text/dark surfaces.
+        // Greys come from Tailwind's built-in `neutral` scale.
         six: {
-          DEFAULT: '#DE3919',
-          dark: '#B82E12',
-          light: '#FBEBE7',
+          DEFAULT: '#F2555A',
+          dark: '#D83C45',
+          light: '#FDECEC',
         },
         ink: {
           DEFAULT: '#1A1A1A',
@@ -32,7 +32,7 @@ export default {
         card: '0 1px 2px rgba(26,26,26,0.04), 0 1px 3px rgba(26,26,26,0.05)',
         elevated:
           '0 2px 4px -2px rgba(26,26,26,0.05), 0 12px 28px -8px rgba(26,26,26,0.12)',
-        'six-glow': '0 6px 20px -6px rgba(222,57,25,0.40)',
+        'six-glow': '0 6px 20px -6px rgba(242,85,90,0.40)',
       },
       keyframes: {
         'fade-up': {

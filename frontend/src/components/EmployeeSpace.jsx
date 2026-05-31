@@ -388,7 +388,7 @@ function AgentAnswer({ data, onAsk }) {
         <span className="font-display text-[11px] font-bold uppercase tracking-widest text-ink">
           SIXth Sense
         </span>
-        <span className="text-[10px] font-medium text-neutral-400">compliance co-pilot</span>
+        <span className="text-[10px] font-medium text-neutral-400">compliance assistant</span>
       </div>
       {lead && <p className="text-sm text-ink mb-2.5 leading-relaxed">{lead}</p>}
       {bullets.length > 0 ? (

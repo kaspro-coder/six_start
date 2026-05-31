@@ -27,7 +27,7 @@ try:  # load backend/.env (e.g. ANTHROPIC_API_KEY) if python-dotenv is present
 except ImportError:
     pass
 
-app = FastAPI(title="SIXsens API", version="0.1.0")
+app = FastAPI(title="CorteX API", version="0.1.0")
 
 # Allow the Vite dev server to call us directly (in addition to the proxy).
 app.add_middleware(
@@ -195,6 +195,93 @@ class DemoStateRequest(BaseModel):
 # rrweb event types: 0=DomContentLoaded, 1=Load, 2=FullSnapshot,
 # 3=IncrementalSnapshot, 4=Meta, 5=Custom, 6=Plugin.
 # IncrementalSnapshot sources: 2=MouseInteraction, 5=Input, etc.
+ACCESS_RANK = {"C1 Public": 1, "C2 Internal": 2, "C3 Restricted": 3}
+
+ROLE_CLEARANCE = {
+    "Compliance Officer": "C2 Internal",
+    "Junior Compliance Officer": "C2 Internal",
+    "ESG & SFDR Workflow Expert": "C3 Restricted",
+    "Senior Reference Data SME": "C3 Restricted",
+}
+
+
+def _user_access_context(context: dict[str, Any] | None) -> dict[str, Any]:
+    ctx = context or {}
+    role = ctx.get("role") or "Junior Compliance Officer"
+    clearance = ctx.get("access_level") or ROLE_CLEARANCE.get(role, "C1 Public")
+    return {
+        "user_id": ctx.get("user_id", "user_cosmina"),
+        "role": role,
+        "department": ctx.get("department", "Regulatory Data Services"),
+        "clearance": clearance,
+    }
+
+
+def _required_access_for_source(source: dict[str, Any]) -> str:
+    source_type = source.get("source_type") or source.get("type") or source.get("kind")
+    if source_type in {"employee_profile", "glossary"}:
+        return "C1 Public"
+    if source_type in {"knowledge_request", "inbox_resolution"}:
+        return "C3 Restricted"
+    return "C2 Internal"
+
+
+def _can_access(required: str, clearance: str) -> bool:
+    return ACCESS_RANK.get(clearance, 0) >= ACCESS_RANK.get(required, 99)
+
+
+def _apply_access_controls(sources: list[dict[str, Any]], context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    access = _user_access_context(context)
+    out: list[dict[str, Any]] = []
+    for source in sources:
+        required = source.get("required_access") or _required_access_for_source(source)
+        permitted = _can_access(required, access["clearance"])
+        item = {
+            **source,
+            "required_access": required,
+            "access_permitted": permitted,
+            "access_checked_for": access["user_id"],
+            "access_checked_role": access["role"],
+            "access_checked_department": access["department"],
+        }
+        if not permitted:
+            item["relevant_quote"] = "[redacted by access policy]"
+            item["content"] = "[redacted by access policy]"
+            item["document"] = None
+            item["source_file"] = None
+            item["demo_pdf_highlight"] = False
+            item["demo_highlights"] = []
+            item["reason"] = f"Access denied: requires {required}; {access['role']} has {access['clearance']}."
+        out.append(item)
+    return out
+
+
+def _access_governance(
+    context: dict[str, Any] | None,
+    sources: list[dict[str, Any]],
+    confidence: dict[str, Any] | None = None,
+    reusable: bool = False,
+    source_policy: str = "Verified SIX knowledge only; unknown topics are refused.",
+) -> dict[str, Any]:
+    access = _user_access_context(context)
+    permitted = sum(1 for s in sources if s.get("access_permitted", True))
+    denied = len(sources) - permitted
+    return {
+        "access_level": access["clearance"],
+        "access_checked": True,
+        "access_checked_for": access["user_id"],
+        "access_checked_role": access["role"],
+        "access_checked_department": access["department"],
+        "access_decision": "permitted" if denied == 0 else "partially redacted",
+        "permitted_source_count": permitted,
+        "redacted_source_count": denied,
+        "evidence_count": len(sources),
+        "confidence_threshold": (confidence or {}).get("threshold", 0.6),
+        "reusable": reusable,
+        "source_policy": source_policy,
+    }
+
+
 def _extract_inputs(events: list[Any]) -> list[str]:
     """Pull human-readable input texts out of rrweb incremental snapshots."""
     texts: list[str] = []
@@ -250,7 +337,7 @@ def _summarize(payload: WorkflowPayload) -> Procedure:
 GENERATION_MODEL = "claude-opus-4-8"
 
 SIXSENS_SYSTEM_PROMPT = """\
-You are SIXsens, a compliance assistant for SIX (the Swiss financial-market \
+You are CorteX, a compliance assistant for SIX (the Swiss financial-market \
 infrastructure: reference data, ESG/regulatory data, securities services). \
 Your user is a junior compliance officer who needs to complete a concrete task \
 correctly and defensibly. You answer by turning retrieved knowledge into a \
@@ -333,6 +420,34 @@ def _generate_answer(
 # ── Routes ───────────────────────────────────────────────────────────────
 SOURCES_DIR = Path(__file__).parent / "SIX_Git_Sources"
 
+# Demo-curated highlight PHRASES (not blind coordinates). The highlighter
+# searches the cited PDF page for this exact text and marks where it actually
+# appears, so the evidence lands on real words instead of arbitrary boxes.
+# Every phrase below is verified to occur on the cited page.
+DEMO_PDF_HIGHLIGHT_PHRASES: dict[str, list[str]] = {
+    "kn_alpen_golden_data": [
+        "AT0000828553",
+        "Alpen Privatbank Ausgewogene Strategie",
+        "ESG Data",
+    ],
+    "kn_sfdr_runbook": [
+        "sustainability",
+        "disclosures",
+        "financial services sector",
+    ],
+    "kn_master_data_onboarding": [
+        "Regulatory Navigator",
+        "Know Your Instrument to Keep Your Compliance",
+        "Investigate the DNA of financial assets",
+    ],
+}
+
+# Cited-page preview shows the cited page plus this many pages on each side, so
+# the reader has surrounding context rather than a single isolated page.
+PAGE_WINDOW = 1
+# Demo evidence highlight colour — highlighter yellow (FFEB3B) as 0..1 RGB.
+HIGHLIGHT_RGB = (1.0, 0.922, 0.231)
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -410,7 +525,7 @@ def serve_document_html(filename: str):
 
 @app.get("/api/documents/{filename}/pages/{page}")
 def serve_document_page(filename: str, page: int):
-    """Serve the exact cited PDF page as a one-page preview."""
+    """Serve a window of pages around the cited one (cited page ± PAGE_WINDOW)."""
     path = (SOURCES_DIR / filename).resolve()
     if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -423,18 +538,86 @@ def serve_document_page(filename: str, page: int):
         total = len(reader.pages)
         if page < 0 or page >= total:
             raise HTTPException(status_code=404, detail="Page not found")
+        start = max(0, page - PAGE_WINDOW)
+        end = min(total - 1, page + PAGE_WINDOW)
         writer = PdfWriter()
-        writer.add_page(reader.pages[page])
+        for p in range(start, end + 1):
+            writer.add_page(reader.pages[p])
         buf = io.BytesIO()
         writer.write(buf)
         buf.seek(0)
         return StreamingResponse(
             buf,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="{filename}_p{page}.pdf"'},
+            headers={"Content-Disposition": f'inline; filename="{filename}_p{start}-{end}.pdf"'},
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Page extraction failed: {exc}")
+
+
+@app.get("/api/documents/{filename}/pages/{page}/highlighted/{source_id}")
+def serve_highlighted_document_page(filename: str, page: int, source_id: str):
+    """Serve the cited page (± PAGE_WINDOW) with the cited text highlighted.
+
+    Highlights are placed by SEARCHING the page for demo-curated phrases (real
+    text on the page), so the marks land on actual words — not blind boxes.
+    Degrades to the plain multi-page window if PyMuPDF is unavailable or no
+    phrase is found.
+    """
+    path = (SOURCES_DIR / filename).resolve()
+    if not str(path).startswith(str(SOURCES_DIR.resolve())) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Highlighting only supported for PDF files")
+
+    phrases = DEMO_PDF_HIGHLIGHT_PHRASES.get(source_id, [])
+    if not phrases:
+        return serve_document_page(filename, page)
+
+    try:
+        import fitz  # PyMuPDF — accurate text search + highlight annotations
+    except Exception:
+        # No highlighter available — still give the multi-page window.
+        return serve_document_page(filename, page)
+
+    try:
+        src = fitz.open(str(path))
+        total = src.page_count
+        if page < 0 or page >= total:
+            raise HTTPException(status_code=404, detail="Page not found")
+
+        # Surrounding-pages window; highlight only the cited page within it.
+        start = max(0, page - PAGE_WINDOW)
+        end = min(total - 1, page + PAGE_WINDOW)
+        out = fitz.open()
+        out.insert_pdf(src, from_page=start, to_page=end)
+        cited = out[page - start]
+
+        found = 0
+        for phrase in phrases:
+            for rect in cited.search_for(phrase, quads=False):
+                annot = cited.add_highlight_annot(rect)
+                annot.set_colors(stroke=HIGHLIGHT_RGB)
+                annot.update()
+                found += 1
+
+        if not found:
+            # Curated phrase didn't match this build of the PDF — don't ship an
+            # empty highlight layer; fall back to the clean window.
+            out.close(); src.close()
+            return serve_document_page(filename, page)
+
+        data = out.tobytes()
+        out.close(); src.close()
+        return StreamingResponse(
+            iter([data]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{filename}_p{start}-{end}_highlighted.pdf"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"PDF highlighting failed: {exc}")
 
 
 @app.post("/api/process-workflow", response_model=WorkflowResponse)
@@ -574,7 +757,7 @@ class _GroundedDraft(BaseModel):
 
 
 GROUNDED_SYSTEM_PROMPT = """\
-You are SIXsens, an enterprise knowledge copilot for SIX (Swiss financial-market \
+You are CorteX, an enterprise knowledge assistant for SIX (Swiss financial-market \
 infrastructure). You answer a compliance officer's question using ONLY the \
 retrieved knowledge chunks provided, each labelled [n].
 
@@ -799,14 +982,9 @@ def _governance_payload(
     ranked: list[dict[str, Any]],
     confidence: dict[str, Any],
     reusable: bool = False,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
-        "access_level": "C2 Internal",
-        "evidence_count": len(ranked),
-        "confidence_threshold": confidence.get("threshold", 0.6),
-        "reusable": reusable,
-        "source_policy": "Verified SIX knowledge only; unknown topics are refused.",
-    }
+    return _access_governance(context, ranked, confidence, reusable)
 
 
 def _build_next_actions(plan, ranked, doc_citations, expert_citations,
@@ -843,6 +1021,464 @@ def _build_next_actions(plan, ranked, doc_citations, expert_citations,
     return actions
 
 
+def _demo_doc(
+    idx: int,
+    source_id: str,
+    source_type: str,
+    title: str,
+    document: str | None,
+    quote: str,
+    page_or_line: str = "line unavailable",
+    department: str = "Regulatory Data Services",
+    trust_level: str = "verified",
+    page: int | None = None,
+    highlights: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": idx,
+        "index": idx,
+        "source_id": source_id,
+        "source_type": source_type,
+        "kind": source_type,
+        "title": title,
+        "document": document,
+        "source_file": document,
+        "page": page,
+        "page_or_line": page_or_line,
+        "department": department,
+        "trust_level": trust_level,
+        "updated_at": "2026-05-30T09:00:00+00:00",
+        "relevance_score": 9.9,
+        "relevant_quote": quote,
+        "content": quote,
+        "demo_highlights": highlights or [],
+        "demo_pdf_highlight": bool(document and page is not None and source_id in DEMO_PDF_HIGHLIGHT_PHRASES),
+        "matched_terms": [],
+        "reason": "Hardcoded demo response for a smooth pitch flow.",
+    }
+
+
+def _demo_expert(expert_id: str, reason: str | None = None) -> dict[str, Any] | None:
+    import knowledge_store as ks
+
+    expert = ks.EXPERTS_BY_ID.get(expert_id)
+    if not expert:
+        return None
+    out = ks.decorate_expert(expert)
+    if reason:
+        out["reason"] = reason
+    return out
+
+
+def _demo_people(query: str) -> list[dict[str, Any]]:
+    import knowledge_store as ks
+
+    return _employee_cards(ks.search_people(query, limit=4))
+
+
+def _demo_grounded_response(req: AnswerRequest) -> GroundedAnswerResponse | None:
+    """Instant deterministic answers for the pitch journey.
+
+    These bypass Claude so the live demo has no API wait, while non-demo
+    questions still use the normal retrieval/LLM path.
+    """
+    q = " ".join(req.question.lower().split())
+
+    jacob = _demo_expert(
+        "exp_jacob_keller",
+        "Owns the captured SFDR workflow and PAI sign-off procedure.",
+    )
+    walter = _demo_expert(
+        "exp_walter_meier",
+        "Closest active SME for instrument coverage and extension assessment.",
+    )
+    sophie = _demo_expert(
+        "exp_sophie_brand",
+        "Related regulatory-data specialist for reporting scope questions.",
+    )
+
+    def response(
+        answer: str,
+        display_format: str,
+        docs: list[dict[str, Any]],
+        steps: list[AnswerStep] | None = None,
+        experts: list[dict[str, Any] | None] | None = None,
+        employees: list[dict[str, Any]] | None = None,
+        confidence: str = "high",
+        confidence_reason: str = "Matched a curated demo path backed by verified SIX corpus and expert-captured procedures.",
+        limitations: list[str] | None = None,
+        next_actions: list[NextBestAction] | None = None,
+        escalation: dict[str, Any] | None = None,
+        engine: str = "demo_hardcoded",
+        expert_unavailable: bool = False,
+        alternatives: list[dict[str, Any]] | None = None,
+    ) -> GroundedAnswerResponse:
+        clean_experts = [e for e in (experts or []) if e]
+        controlled_docs = _apply_access_controls(docs, req.context)
+        return GroundedAnswerResponse(
+            question=req.question,
+            engine=engine,
+            answer=answer,
+            display_format=display_format,
+            steps=steps or [],
+            confidence=confidence,
+            confidence_reason=confidence_reason,
+            confidence_score=1.0 if confidence == "high" else 0.72,
+            confidence_threshold=0.6,
+            context_used={
+                "user_role": req.context.get("role"),
+                "department": req.context.get("department"),
+                "retrieved_source_count": len(docs),
+                "demo_hardcoded": True,
+            },
+            query_plan={"detected_intent": display_format, "demo_hardcoded": True},
+            document_citations=controlled_docs,
+            expert_citations=clean_experts,
+            employee_citations=employees or [],
+            expert_unavailable=expert_unavailable,
+            suggested_alternatives=alternatives or [],
+            governance=_access_governance(
+                req.context,
+                controlled_docs,
+                {"threshold": 0.6},
+                reusable=any(d.get("source_type") == "expert_resolution" for d in controlled_docs),
+                source_policy="Curated demo answer; no LLM call made; access policy applied before citations are returned.",
+            ),
+            source_trace=[
+                {"source_id": d.get("source_id"), "title": d.get("title"), "reason_used": d.get("reason")}
+                for d in controlled_docs
+            ],
+            limitations=limitations or [],
+            next_best_actions=next_actions or [],
+            escalation=escalation,
+        )
+
+    alpen_doc = _demo_doc(
+        1,
+        "kn_alpen_golden_data",
+        "document",
+        "Golden data sample: Alpen Privatbank Ausgewogene Strategie",
+        "Start Hack ZH_SIX_Presentation.pdf",
+        "ISIN AT0000828553 resolves as Alpen Privatbank Ausgewogene Strategie; verify SFDR classification, Regulatory Based flag, and PAI completeness before sign-off.",
+        "page 12",
+        page=11,
+        highlights=[
+            "ISIN AT0000828553",
+            "Alpen Privatbank Ausgewogene Strategie",
+            "SFDR classification",
+            "PAI completeness",
+        ],
+    )
+    sfdr_runbook = _demo_doc(
+        1,
+        "kn_sfdr_runbook",
+        "runbook",
+        "SFDR Article 8/9 classification runbook",
+        "EU_SFDR_jc_2021_03_joint_esas_final_report_on_rts_under_sfdr.pdf",
+        "To classify a fund under SFDR, confirm the ISIN resolves, open the ESG Data panel, read the Article 6/8/9 classification, verify Regulatory Based is Yes, and confirm mandatory PAI indicators.",
+        "page 1",
+        page=0,
+        highlights=[
+            "confirm the ISIN resolves",
+            "SFDR classification",
+            "Article 6 / 8 / 9",
+            "Regulatory Based",
+            "PAI indicators",
+        ],
+    )
+    pai_note = _demo_doc(
+        2,
+        "kn_pai_note",
+        "expert_note",
+        "Which PAI indicators must be populated before sign-off",
+        None,
+        "Mandatory PAI checks include GHG emissions Scopes 1-3, carbon footprint, GHG intensity, fossil-fuel exposure, and non-renewable energy share.",
+        highlights=[
+            "GHG emissions Scopes 1-3",
+            "carbon footprint",
+            "GHG intensity",
+            "fossil-fuel exposure",
+            "non-renewable energy share",
+        ],
+    )
+    onboarding = _demo_doc(
+        1,
+        "kn_master_data_onboarding",
+        "runbook",
+        "Master Data opening & instrument onboarding",
+        "Confidential_SIX_master-data-openining-and-mutations-facsheet.pdf",
+        "Coverage cannot be confirmed without an ISIN. If the instrument is not covered natively or misses required SFDR PAI attributes, initiate an extension assessment.",
+        "page 1",
+        page=0,
+        highlights=[
+            "Coverage cannot be confirmed without an ISIN",
+            "not covered natively",
+            "missing required SFDR PAI attributes",
+            "extension assessment",
+        ],
+    )
+
+    if "golden data" in q or "at0000828553" in q:
+        return response(
+            answer=(
+                "For Alpen Privatbank Ausgewogene Strategie, ISIN AT0000828553 resolves in the curated golden-data sample. "
+                "Treat it as an ESG/SFDR master-data check: validate the SFDR classification, confirm the Regulatory Based flag, "
+                "and check PAI completeness before sign-off [1]."
+            ),
+            display_format="direct_answer",
+            docs=[alpen_doc],
+            experts=[jacob],
+            next_actions=[
+                NextBestAction(label="Open golden-data source", type="open_document", target_id="1"),
+                NextBestAction(label="Ask for the SFDR workflow", type="ask_follow_up", suggested_prompt="How do I verify SFDR data for Alpen Privatbank?"),
+            ],
+        )
+
+    if ("verify" in q and "sfdr" in q and "alpen" in q) or ("how do i verify sfdr" in q):
+        return response(
+            answer="Use Jacob's captured workflow. It combines the golden-data record with the SFDR classification runbook [1][2].",
+            display_format="step_by_step",
+            docs=[sfdr_runbook, alpen_doc],
+            steps=[
+                AnswerStep(text='Open Master Data Opening and search for counterparty "Alpen Privatbank".', citations=[2]),
+                AnswerStep(text="Enter ISIN AT0000828553 and confirm the security resolves to the expected fund.", citations=[2]),
+                AnswerStep(text="Open the ESG Data panel and read the SFDR classification: Article 6, 8, or 9.", citations=[1]),
+                AnswerStep(text='Confirm "Regulatory Based" is set to Yes before relying on the value.', citations=[1]),
+                AnswerStep(text="Check mandatory PAI indicators before sign-off, then mark the record Verified.", citations=[1]),
+            ],
+            experts=[jacob],
+            next_actions=[
+                NextBestAction(label="What PAI indicators must be populated before sign-off?", type="ask_follow_up", suggested_prompt="What PAI indicators must be populated before sign-off?"),
+                NextBestAction(label="Contact Jacob Keller", type="contact_expert", target_id="exp_jacob_keller"),
+            ],
+        )
+
+    if "who is jacob" in q or "jacob keller" in q and "who" in q:
+        employees = _demo_people("Jacob Keller")
+        return response(
+            answer=(
+                "Jacob Keller is the ESG & SFDR Workflow Expert in Regulatory Data Services. "
+                "He owns practical knowledge around SFDR workflows, ESG sub-classification, PAI sign-off checks, and master-data opening."
+            ),
+            display_format="employee_profile",
+            docs=[],
+            experts=[jacob],
+            employees=employees,
+            next_actions=[NextBestAction(label="Contact Jacob Keller", type="contact_expert", target_id="exp_jacob_keller")],
+            confidence_reason="Matched Jacob Keller in the employee directory.",
+            engine="directory_demo",
+        )
+
+    if "pai indicators" in q or "before sign-off" in q:
+        return response(
+            answer=(
+                "Before SFDR sign-off, check the mandatory PAI set: GHG emissions Scopes 1-3, carbon footprint, "
+                "GHG intensity, fossil-fuel exposure, and non-renewable energy share [1]. Missing mandatory PAI values mean the record should not be signed off."
+            ),
+            display_format="direct_answer",
+            docs=[pai_note],
+            experts=[jacob],
+            next_actions=[NextBestAction(label="Contact Jacob Keller", type="contact_expert", target_id="exp_jacob_keller")],
+        )
+
+    if "onboarding" in q or "extension assessment" in q or "instrument need" in q:
+        return response(
+            answer=(
+                "An instrument needs onboarding or extension assessment when it does not resolve under native coverage, "
+                "or when required attributes such as SFDR PAI properties are missing. Do not sign off manually; route it through Master Data extension assessment [1]."
+            ),
+            display_format="direct_answer",
+            docs=[onboarding],
+            experts=[walter],
+            next_actions=[NextBestAction(label="Contact Walter Meier", type="contact_expert", target_id="exp_walter_meier")],
+        )
+
+    if "esg-linked structured product" in q or "missing pai" in q or "structured product validation" in q:
+        active_jacob = bool(jacob and jacob.get("active"))
+        alternatives = [e for e in [walter, sophie] if e]
+        routed = alternatives if ("no longer" in q or "not available" in q or not active_jacob) else [walter, jacob]
+        draft = {
+            "title": "Validate ESG-linked structured product with missing PAI attributes",
+            "question": req.question,
+            "context_summary": (
+                "The user is validating a new ESG-linked structured product. Native coverage and SFDR PAI completeness are uncertain; "
+                "the request should be reviewed by Master Data / ESG SMEs."
+            ),
+            "requester_user_id": req.context.get("user_id", "user_cosmina"),
+            "routed_expert_ids": [routed[0]["id"]] if routed else [],
+            "domain_tags": ["esg_sfdr", "master_data"],
+            "related_source_ids": ["kn_master_data_onboarding", "kn_pai_note"],
+            "priority": "high",
+            "notes": "",
+        }
+        return response(
+            answer=(
+                "This is non-trivial because the product combines structured-product coverage with ESG/SFDR attribute completeness. "
+                "CorteX cannot safely confirm coverage without an ISIN and without checking PAI attributes. Route this to the active Master Data SME for an extension assessment [1][2]."
+            ),
+            display_format="escalation_needed",
+            docs=[onboarding, pai_note],
+            experts=routed,
+            expert_unavailable=not active_jacob,
+            alternatives=alternatives if not active_jacob else [],
+            limitations=["No ISIN was provided, so instrument-level coverage cannot be confirmed."],
+            next_actions=[
+                NextBestAction(label="Send a knowledge request", type="create_knowledge_request"),
+                NextBestAction(label=f"Contact {routed[0]['expert_name']}", type="contact_expert", target_id=routed[0]["id"]),
+            ] if routed else [NextBestAction(label="Send a knowledge request", type="create_knowledge_request")],
+            escalation={
+                "needed": True,
+                "reasons": [
+                    "No ISIN provided for instrument-level coverage verification.",
+                    "Missing or uncertain SFDR PAI attributes require expert assessment.",
+                ],
+                "recommendation": f"Route to {routed[0]['expert_name']} for Master Data extension assessment." if routed else "Route to Master Data Operations.",
+                "experts": routed,
+                "request_draft": draft,
+            },
+            confidence="medium",
+            confidence_reason="The route is known, but the exact product cannot be validated without an ISIN and attribute check.",
+        )
+
+    if "project helios alpha" in q or "maria novik" in q:
+        return response(
+            answer=(
+                "I do not have verified company documentation, a current employee-directory match, or a logged expert resolution for Project Helios Alpha or Maria Novik. "
+                "To avoid inventing information, CorteX cannot answer this from the available SIX knowledge base."
+            ),
+            display_format="zero_knowledge",
+            docs=[],
+            experts=[],
+            confidence="low",
+            confidence_reason="No curated demo source, directory profile, or reusable expert resolution matches this subject.",
+            limitations=["No verified evidence found in the demo corpus."],
+            next_actions=[],
+            engine="zero_knowledge_demo",
+        )
+
+    return None
+
+
+GLOSSARY: dict[str, dict[str, str]] = {
+    "isin": {
+        "label": "ISIN",
+        "answer": (
+            "An ISIN, or International Securities Identification Number, is a 12-character identifier used to uniquely identify a financial instrument. "
+            "It normally has a two-letter country prefix, nine alphanumeric characters, and one check digit. An ISIN identifies the security itself; it does not by itself confirm whether SIX has full data coverage, eligibility, or all required regulatory attributes."
+        ),
+        "quote": "ISIN is a 12-character international identifier for a security; instrument coverage still needs a concrete ISIN-level lookup.",
+    },
+    "lei": {
+        "label": "LEI",
+        "answer": (
+            "An LEI, or Legal Entity Identifier, is a 20-character identifier for a legal entity participating in financial transactions. "
+            "It identifies the entity, not a specific instrument, and is commonly used for regulatory reporting, counterparty identification, and data quality checks."
+        ),
+        "quote": "LEI identifies a legal entity, while identifiers such as ISIN identify instruments.",
+    },
+    "cusip": {
+        "label": "CUSIP",
+        "answer": (
+            "A CUSIP is a North American security identifier, typically nine characters long, used mainly for instruments issued in the United States and Canada. "
+            "It is useful for local identification, while ISIN is the more global security identifier."
+        ),
+        "quote": "CUSIP is a North American security identifier; ISIN is the global identifier format.",
+    },
+    "sedol": {
+        "label": "SEDOL",
+        "answer": (
+            "A SEDOL is a seven-character identifier commonly used in the UK and Ireland for listed securities. "
+            "It helps identify traded instruments in local market workflows, but it is not the same as an ISIN."
+        ),
+        "quote": "SEDOL is a local market security identifier, distinct from the global ISIN.",
+    },
+    "sfdr": {
+        "label": "SFDR",
+        "answer": (
+            "SFDR stands for Sustainable Finance Disclosure Regulation. In this app's workflow context, it matters because products can require sustainability classifications, disclosures, and PAI-related checks before operational sign-off."
+        ),
+        "quote": "SFDR concerns sustainability-related disclosures and classifications for financial products.",
+    },
+    "pai": {
+        "label": "PAI",
+        "answer": (
+            "PAI means Principal Adverse Impact. In an ESG/SFDR data workflow, PAI indicators describe adverse sustainability impacts that may need to be populated and checked before a record can be verified."
+        ),
+        "quote": "PAI indicators are sustainability-impact data points used in SFDR-related checks.",
+    },
+}
+
+
+def _glossary_response(req: AnswerRequest) -> GroundedAnswerResponse | None:
+    q = " ".join(req.question.lower().split())
+    definition_intent = any(
+        phrase in q
+        for phrase in ("what is", "what are", "define", "meaning of", "what does", "explain")
+    )
+    if not definition_intent:
+        return None
+
+    hit_key = None
+    for key in GLOSSARY:
+        if key in q:
+            hit_key = key
+            break
+    if not hit_key:
+        return None
+
+    item = GLOSSARY[hit_key]
+    citation = _demo_doc(
+        1,
+        f"glossary_{hit_key}",
+        "glossary",
+        f"{item['label']} definition",
+        None,
+        item["quote"],
+        "CorteX glossary",
+        department="Reference Data Services",
+        trust_level="verified",
+    )
+    controlled = _apply_access_controls([citation], req.context)
+    return GroundedAnswerResponse(
+        question=req.question,
+        engine="glossary",
+        answer=f"{item['answer']} [1]",
+        display_format="direct_answer",
+        steps=[],
+        confidence="high",
+        confidence_reason="Answered from the built-in CorteX glossary for common financial-market terminology.",
+        confidence_score=0.95,
+        confidence_threshold=0.6,
+        context_used={
+            "user_role": req.context.get("role"),
+            "department": req.context.get("department"),
+            "retrieved_source_count": 1,
+            "glossary": True,
+        },
+        query_plan={"detected_intent": "definition", "glossary_term": hit_key},
+        document_citations=controlled,
+        expert_citations=[],
+        employee_citations=[],
+        governance=_access_governance(
+            req.context,
+            controlled,
+            {"threshold": 0.6},
+            reusable=False,
+            source_policy="Common terminology glossary; not an instrument-level coverage decision.",
+        ),
+        limitations=[
+            "This is a general definition, not a confirmation of SIX coverage or completeness for a specific instrument."
+        ],
+        next_best_actions=[
+            NextBestAction(
+                label="Check coverage for a concrete ISIN",
+                type="ask_follow_up",
+                suggested_prompt="How do I check whether an ISIN is covered?",
+            )
+        ] if hit_key == "isin" else [],
+    )
+
+
 # ── Knowledge & context engine routes (specs 09 / 10 / 11) ───────────────
 
 @app.post("/api/answer", response_model=GroundedAnswerResponse)
@@ -859,6 +1495,14 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         )
 
     context = ce.collect_user_context(req.context)
+    glossary = _glossary_response(req)
+    if glossary is not None:
+        return glossary
+
+    demo = _demo_grounded_response(req)
+    if demo is not None:
+        return demo
+
     plan = ce.plan_query(req.question, context)
 
     if plan.get("detected_intent") == "employee_search":
@@ -896,7 +1540,7 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
             expert_citations=employee_cards,
             expert_unavailable=bool(people and not people[0].get("active")),
             suggested_alternatives=alternatives,
-            governance=_governance_payload([], confidence, reusable=False),
+            governance=_governance_payload([], confidence, reusable=False, context=context),
             limitations=confidence["limitations"],
             next_best_actions=[
                 NextBestAction(
@@ -927,7 +1571,7 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
                 "I don't have any verified company documentation, employee "
                 "directory record, or logged expert resolution regarding this "
                 "topic. To prevent inaccurate information, I cannot provide an "
-                "answer from SIXsens. Please verify the subject or submit a "
+                "answer from CorteX. Please verify the subject or submit a "
                 "general inquiry."
             ),
             steps=[],
@@ -956,7 +1600,7 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
     else:
         draft = _compose_grounded(req.question, ranked, display_format)
 
-    document_citations = _citations_from_chunks(ranked)
+    document_citations = _apply_access_controls(_citations_from_chunks(ranked), context)
     expert_citations = _expert_citations(ranked, routed_experts)
     expert_unavailable, suggested_alternatives = _legacy_expert_signal(ranked)
     if expert_unavailable:
@@ -1003,9 +1647,10 @@ def answer(req: AnswerRequest) -> GroundedAnswerResponse:
         expert_unavailable=expert_unavailable,
         suggested_alternatives=suggested_alternatives,
         governance=_governance_payload(
-            ranked,
+            document_citations,
             confidence,
             reusable=any(c.get("source_type") == "expert_resolution" for c in ranked),
+            context=context,
         ),
         source_trace=source_trace, limitations=confidence["limitations"],
         next_best_actions=next_actions, escalation=escalation_out, detail=detail,

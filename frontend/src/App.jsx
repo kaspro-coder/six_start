@@ -8,9 +8,43 @@ import GraphPane from './components/GraphPane.jsx'
 import ProfilePane from './components/ProfilePane.jsx'
 import FloatingWindow from './components/FloatingWindow.jsx'
 import ExpertInbox from './components/escalation/ExpertInbox.jsx'
+import MessageInbox from './components/escalation/MessageInbox.jsx'
 import ContactExpertModal from './components/ContactExpertModal.jsx'
 import Login from './components/Login.jsx'
 import { useSessions } from './hooks/useSessions.js'
+
+const PERSONAS = [
+  {
+    id: 'user_cosmina',
+    key: 'cosmina',
+    name: 'Cosmina',
+    fullName: 'Cosmina Petrescu',
+    initials: 'CP',
+    role: 'Compliance Officer',
+    department: 'Regulatory Affairs',
+    type: 'employee',
+  },
+  {
+    id: 'exp_jacob_keller',
+    key: 'jacob',
+    name: 'Jacob',
+    fullName: 'Jacob Keller',
+    initials: 'JK',
+    role: 'ESG & SFDR Workflow Expert',
+    department: 'Regulatory Data Services',
+    type: 'expert',
+  },
+  {
+    id: 'exp_walter_meier',
+    key: 'walter',
+    name: 'Walter',
+    fullName: 'Walter Meier',
+    initials: 'WM',
+    role: 'Senior Reference Data SME',
+    department: 'Master Data Operations',
+    type: 'expert',
+  },
+]
 
 export default function App() {
   const [currentUser, setCurrentUser]               = useState(null)
@@ -18,7 +52,9 @@ export default function App() {
   const [inboxUnread, setInboxUnread]               = useState(0)
   const [inboxRefresh, setInboxRefresh]             = useState(0)
   const [contactExpert, setContactExpert]           = useState(null)
+  const [personaKey, setPersonaKey]                 = useState('cosmina')
   const { sessions, currentId, currentSession, saveMessages, newChat, loadSession } = useSessions()
+  const persona = PERSONAS.find(p => p.key === personaKey) ?? PERSONAS[0]
 
   const handleRequestCreated = useCallback(() => {
     setInboxUnread(n => n + 1)
@@ -42,11 +78,15 @@ export default function App() {
         user={currentUser}
         onLogout={() => setCurrentUser(null)}
         tabBadges={{ inbox: inboxUnread }}
+        persona={persona}
+        personas={PERSONAS}
+        onSwitchPersona={setPersonaKey}
       >
         {(activeTab, setActiveTab) => {
           if (activeTab === 'chat') return (
             <ChatPane
               key={currentId}
+              persona={persona}
               capturedProcedures={capturedProcedures}
               initialMessages={currentSession?.messages}
               onMessagesChange={saveMessages}
@@ -67,12 +107,21 @@ export default function App() {
           if (activeTab === 'graph')    return <GraphPane />
           if (activeTab === 'profile')  return (
             <ProfilePane
+              persona={persona}
               sessions={sessions}
               onOpenDiscussion={s => { loadSession(s.id); setActiveTab('chat') }}
             />
           )
-          if (activeTab === 'inbox')    return (
+          if (activeTab === 'inbox' && persona.type === 'expert')    return (
             <ExpertInbox
+              persona={persona}
+              refreshSignal={inboxRefresh}
+              onChanged={handleInboxChanged}
+            />
+          )
+          if (activeTab === 'inbox')    return (
+            <MessageInbox
+              persona={persona}
               refreshSignal={inboxRefresh}
               onChanged={handleInboxChanged}
             />
@@ -83,6 +132,7 @@ export default function App() {
       {contactExpert && (
         <ContactExpertModal
           expert={contactExpert}
+          persona={persona}
           onClose={() => setContactExpert(null)}
           onSubmitted={() => { handleRequestCreated(); setContactExpert(null) }}
           onGoToInbox={() => { setContactExpert(null); setInboxUnread(0) }}

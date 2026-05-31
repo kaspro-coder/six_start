@@ -6,16 +6,16 @@ import {
 import { listKnowledgeRequests, resolveKnowledgeRequest } from '../../lib/api.js'
 
 const STATUS_META = {
-  open:                  { cls: 'bg-amber-50 text-amber-700 border-amber-200', label: 'Open' },
+  open:                  { cls: 'bg-six-light text-six border-six/30', label: 'Open' },
   in_review:             { cls: 'bg-blue-50 text-blue-700 border-blue-200',     label: 'In review' },
   resolved:              { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'Resolved' },
   converted_to_knowledge:{ cls: 'bg-six-light text-six border-six/30',          label: 'Knowledge' },
 }
-const PRIORITY_CLS = { high: 'text-red-600', medium: 'text-amber-600', low: 'text-neutral-400' }
+const PRIORITY_CLS = { high: 'text-red-600', medium: 'text-six', low: 'text-neutral-400' }
 
 // Expert-facing inbox (spec 11 §4-6 + §8). Lists routed knowledge requests;
 // opening one lets the expert log a resolution that becomes reusable knowledge.
-export default function ExpertInbox({ refreshSignal, onChanged }) {
+export default function ExpertInbox({ persona, refreshSignal, onChanged }) {
   const [requests, setRequests] = useState(null)
   const [error, setError] = useState(null)
   const [viewing, setViewing] = useState(null)
@@ -44,8 +44,9 @@ export default function ExpertInbox({ refreshSignal, onChanged }) {
     )
   }
 
-  const open = (requests ?? []).filter(r => r.status === 'open' || r.status === 'in_review')
-  const closed = (requests ?? []).filter(r => r.status === 'resolved' || r.status === 'converted_to_knowledge')
+  const visibleRequests = (requests ?? []).filter(r => !persona?.id || r.routed_expert_ids?.includes(persona.id))
+  const open = visibleRequests.filter(r => r.status === 'open' || r.status === 'in_review')
+  const closed = visibleRequests.filter(r => r.status === 'resolved' || r.status === 'converted_to_knowledge')
 
   return (
     <div className="flex h-full flex-col">
@@ -62,12 +63,12 @@ export default function ExpertInbox({ refreshSignal, onChanged }) {
         {requests === null ? (
           <Centered><Loader2 size={22} className="animate-spin text-six" /><p className="text-xs text-neutral-400">Loading inbox…</p></Centered>
         ) : error ? (
-          <Centered><AlertTriangle size={22} className="text-amber-500" /><p className="text-xs text-neutral-500">{error}</p></Centered>
-        ) : requests.length === 0 ? (
+          <Centered><AlertTriangle size={22} className="text-six" /><p className="text-xs text-neutral-500">{error}</p></Centered>
+        ) : visibleRequests.length === 0 ? (
           <Centered>
             <Inbox size={28} className="text-neutral-300" />
             <p className="font-display text-sm font-bold text-ink">Inbox is empty</p>
-            <p className="max-w-[240px] text-xs text-neutral-400">When the assistant escalates a question, the knowledge request lands here for the routed expert.</p>
+            <p className="max-w-[240px] text-xs text-neutral-400">When CorteX escalates a question to {persona?.name ?? 'this expert'}, the request lands here.</p>
           </Centered>
         ) : (
           <ul className="divide-y divide-neutral-100">
@@ -289,7 +290,7 @@ function ReusableKnowledgePreview({ item }) {
       <p className="text-xs font-semibold text-ink">{item.title}</p>
       <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-600">{item.summary}</p>
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className={`rounded border px-1 py-px text-[9px] font-bold ${item.trust_level === 'verified' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+        <span className={`rounded border px-1 py-px text-[9px] font-bold ${item.trust_level === 'verified' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-six/30 bg-six-light text-six'}`}>
           {item.trust_level === 'verified' ? 'Verified' : 'Draft'}
         </span>
         <span className="text-[9px] font-semibold uppercase tracking-wide text-six">Expert Resolution</span>

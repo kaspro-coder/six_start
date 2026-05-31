@@ -24,15 +24,15 @@ const sourceMeta = (t) => SOURCE_META[t] ?? { Icon: FileText, label: 'Source' }
 
 const TRUST_META = {
   verified: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'Verified' },
-  draft:    { cls: 'bg-amber-50 text-amber-700 border-amber-200',       label: 'Draft' },
-  stale:    { cls: 'bg-orange-50 text-orange-700 border-orange-200',     label: 'Stale' },
+  draft:    { cls: 'bg-six-light text-six border-six/30',                label: 'Draft' },
+  stale:    { cls: 'bg-red-50 text-red-700 border-red-200',              label: 'Stale' },
   unknown:  { cls: 'bg-neutral-50 text-neutral-500 border-neutral-200',  label: 'Unverified' },
 }
 const trustMeta = (t) => TRUST_META[t] ?? TRUST_META.unknown
 
 const CONF_META = {
   high:   { cls: 'bg-emerald-500 text-white', dot: 'bg-emerald-200', label: 'High confidence' },
-  medium: { cls: 'bg-amber-500 text-white',   dot: 'bg-amber-200',   label: 'Medium confidence' },
+  medium: { cls: 'bg-six text-white',         dot: 'bg-six-light',   label: 'Medium confidence' },
   low:    { cls: 'bg-red-500 text-white',     dot: 'bg-red-200',     label: 'Low confidence' },
 }
 const confMeta = (c) => CONF_META[c] ?? CONF_META.low
@@ -128,6 +128,7 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
   const isZeroKnowledge = data.display_format === 'zero_knowledge' || data.engine === 'zero_knowledge'
   const conf = confMeta(data.confidence)
   const [showExperts, setShowExperts] = useState(false)
+  const [showEmployees, setShowEmployees] = useState(false)
 
   return (
     <div className="relative inline-block w-full max-w-[560px] text-left bg-white rounded-2xl rounded-tl-md border border-neutral-200/80 shadow-card overflow-hidden">
@@ -138,8 +139,8 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
         <span className="grid h-4 w-4 place-items-center rounded-md bg-six">
           <span className="h-1 w-1 rounded-[1px] bg-white/90" />
         </span>
-        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">SIXsens</span>
-        <span className="text-[10px] text-neutral-400">knowledge copilot</span>
+        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">CorteX</span>
+        <span className="text-[10px] text-neutral-400">knowledge assistant</span>
         <span className={`ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${conf.cls}`}>
           <Gauge size={10} /> {data.confidence}
         </span>
@@ -164,7 +165,14 @@ export default function GroundedAnswer({ data, onAsk, onCiteClick, onSelectExper
 
         <GovernancePanel governance={data.governance} confidenceScore={data.confidence_score} />
 
-        {employees.length > 0 && <EmployeePanel employees={employees} onSelectExpert={onSelectExpert} />}
+        {employees.length > 0 && (
+          <EmployeePanel
+            employees={employees}
+            onSelectExpert={onSelectExpert}
+            showAll={showEmployees}
+            setShowAll={setShowEmployees}
+          />
+        )}
 
         {/* ── Confidence & limitations ───────────────────────── */}
         <ConfidencePanel
@@ -249,19 +257,19 @@ function ZeroKnowledgeBlock({ message }) {
 function LegacyExpertBanner({ alternatives, onSelectExpert }) {
   const first = alternatives?.[0]
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5">
+    <div className="rounded-xl border border-six/25 bg-six-light/80 px-3 py-2.5">
       <div className="flex items-start gap-2">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-600" />
+        <AlertTriangle size={14} className="mt-0.5 shrink-0 text-six" />
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-bold text-amber-900">Legacy expert knowledge</p>
-          <p className="mt-0.5 text-[11px] leading-relaxed text-amber-800">
+          <p className="text-[11px] font-bold text-ink">Legacy expert knowledge</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-six-dark">
             This answer may rely on knowledge owned by Jacob, who is marked inactive in the live employee directory.
             {first ? ` For current assistance, contact ${first.full_name ?? first.expert_name} (${first.role_title}).` : ' No active replacement is currently mapped.'}
           </p>
           {first && (
             <button
               onClick={() => onSelectExpert?.(first)}
-              className="mt-2 rounded-lg bg-amber-500 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-amber-600"
+              className="mt-2 rounded-lg bg-six px-2.5 py-1 text-[10px] font-bold text-white hover:bg-six-dark"
               type="button"
             >
               Contact active alternative
@@ -276,20 +284,20 @@ function LegacyExpertBanner({ alternatives, onSelectExpert }) {
 function EscalationBlock({ esc, onSelectExpert, onEscalate }) {
   const top = esc.experts?.[0]
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50/70 overflow-hidden">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white">
+    <div className="rounded-xl border border-six/25 bg-six-light/70 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-six text-white">
         <AlertTriangle size={12} />
         <span className="text-[11px] font-bold tracking-wide">Expert escalation recommended</span>
       </div>
       <div className="px-3 py-2.5 space-y-2">
         {esc.recommendation && (
-          <p className="text-[11px] leading-relaxed text-amber-900">{esc.recommendation}</p>
+          <p className="text-[11px] leading-relaxed text-six-dark">{esc.recommendation}</p>
         )}
         {esc.reasons?.length > 0 && (
           <ul className="space-y-0.5">
             {esc.reasons.map((r, i) => (
-              <li key={i} className="flex gap-1.5 text-[10px] text-amber-800">
-                <span className="mt-1 h-1 w-1 rounded-full bg-amber-500 shrink-0" /> {r}
+              <li key={i} className="flex gap-1.5 text-[10px] text-six-dark">
+                <span className="mt-1 h-1 w-1 rounded-full bg-six shrink-0" /> {r}
               </li>
             ))}
           </ul>
@@ -318,9 +326,32 @@ function EscalationBlock({ esc, onSelectExpert, onEscalate }) {
 function GovernancePanel({ governance, confidenceScore }) {
   if (!governance && confidenceScore == null) return null
   const score = typeof confidenceScore === 'number' ? `${Math.round(confidenceScore * 100)}%` : 'n/a'
+  const checkedFor = governance?.access_checked_role
+    ? `${governance.access_checked_role} · ${governance.access_checked_department ?? 'SIX'}`
+    : 'Role verified'
+  const decision = governance?.access_decision ?? 'permitted'
   return (
     <div className="border-t border-neutral-100 pt-2.5">
       <SectionLabel>Trust & governance</SectionLabel>
+      {governance?.access_checked && (
+        <div className={`mt-1.5 rounded-xl border px-2.5 py-2 ${
+          decision === 'permitted'
+            ? 'border-emerald-200 bg-emerald-50/70'
+            : 'border-six/30 bg-six-light'
+        }`}>
+          <div className="flex items-start gap-2">
+            <ShieldCheck size={13} className={decision === 'permitted' ? 'mt-0.5 shrink-0 text-emerald-600' : 'mt-0.5 shrink-0 text-six'} />
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-ink">
+                Access checked: {decision}
+              </p>
+              <p className="mt-0.5 text-[10px] leading-relaxed text-neutral-600">
+                {checkedFor} · clearance {governance.access_level ?? 'C2 Internal'} · {governance.permitted_source_count ?? governance.evidence_count ?? 0}/{governance.evidence_count ?? 0} source(s) permitted
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="mt-1.5 grid grid-cols-2 gap-1.5">
         <GovChip label="Access" value={governance?.access_level ?? 'C2 Internal'} />
         <GovChip label="Confidence" value={score} />
@@ -476,14 +507,55 @@ function ExpertCards({ experts, onSelectExpert }) {
   )
 }
 
-function EmployeePanel({ employees, onSelectExpert }) {
+function EmployeePanel({ employees, onSelectExpert, showAll, setShowAll }) {
+  const primary = employees[0]
+  const hidden = employees.slice(1)
   return (
     <div className="border-t border-neutral-100 pt-2.5">
       <SectionLabel>Employee directory</SectionLabel>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        {employees.map(e => (
-          <EmployeeCard key={e.id ?? e.email} employee={e} onSelect={onSelectExpert} />
-        ))}
+      <div className="mt-2">
+        {primary && <EmployeeCard employee={primary} onSelect={onSelectExpert} />}
+        {hidden.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            className="mt-2 inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-[10px] font-semibold text-neutral-500 transition-colors hover:border-six hover:text-six"
+          >
+            <User size={11} /> Show other matches ({hidden.length})
+          </button>
+        )}
+      </div>
+      {showAll && (
+        <EmployeeDirectoryModal
+          employees={employees}
+          onSelectExpert={onSelectExpert}
+          onClose={() => setShowAll(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function EmployeeDirectoryModal({ employees, onSelectExpert, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/30 px-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-neutral-200 bg-white shadow-elevated">
+        <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+          <div>
+            <p className="font-display text-sm font-bold text-ink">Employee directory matches</p>
+            <p className="text-[10px] text-neutral-400">Only the best match is shown in-chat; browse related people here.</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg px-2 py-1 text-xs font-semibold text-neutral-400 hover:bg-neutral-100 hover:text-ink">
+            Close
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto scroll-slim p-4">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {employees.map(e => (
+              <EmployeeCard key={e.id ?? e.email} employee={e} onSelect={onSelectExpert} />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -504,7 +576,7 @@ function ConfidencePanel({ level, reason, limitations }) {
         <ul className="mt-1.5 space-y-0.5">
           {limitations.map((l, i) => (
             <li key={i} className="flex gap-1.5 text-[10px] text-neutral-500">
-              <AlertTriangle size={10} className="mt-0.5 shrink-0 text-amber-500" /> {l}
+              <AlertTriangle size={10} className="mt-0.5 shrink-0 text-six" /> {l}
             </li>
           ))}
         </ul>

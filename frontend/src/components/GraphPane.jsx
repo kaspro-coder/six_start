@@ -2,8 +2,9 @@ import { useRef, useCallback, useState, useEffect, useMemo } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
 import { Network, ZoomIn, ZoomOut, RotateCcw, Mail, X, Users, ChevronDown, Search, Check } from 'lucide-react'
 
-const BRAND_RED  = '#DE3919'
-const ORANGE     = '#F97316' // the signed-in user's own department
+const BRAND_RED  = '#F2555A'
+const USER_RED   = '#F2555A' // the signed-in user's own department
+const USER_RED_DARK = '#D83C45'
 const RING_GRAY  = '#D9D5D0'
 const LABEL_GRAY = '#3F3F46'
 
@@ -144,17 +145,17 @@ export default function GraphPane() {
     const isSel = node.id === selected
 
     if (node.isUser) {
-      // Soft halo + solid opaque orange — "you are here".
+      // Soft halo + solid brand red — "you are here".
       ctx.beginPath(); ctx.arc(node.x, node.y, r + 10, 0, 2 * Math.PI)
-      ctx.fillStyle = 'rgba(249,115,22,0.18)'; ctx.fill()
+      ctx.fillStyle = 'rgba(242,85,90,0.18)'; ctx.fill()
       ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = ORANGE; ctx.fill()
-      ctx.lineWidth = 2; ctx.strokeStyle = '#C2410C'; ctx.stroke()
+      ctx.fillStyle = USER_RED; ctx.fill()
+      ctx.lineWidth = 2; ctx.strokeStyle = USER_RED_DARK; ctx.stroke()
     } else if (node.critical) {
       ctx.beginPath(); ctx.arc(node.x, node.y, r + 10, 0, 2 * Math.PI)
-      ctx.fillStyle = 'rgba(222,57,25,0.10)'; ctx.fill()
+      ctx.fillStyle = 'rgba(242,85,90,0.10)'; ctx.fill()
       ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
-      ctx.fillStyle = 'rgba(222,57,25,0.16)'; ctx.fill()
+      ctx.fillStyle = 'rgba(242,85,90,0.16)'; ctx.fill()
       ctx.lineWidth = 2.5; ctx.strokeStyle = BRAND_RED; ctx.stroke()
     } else {
       ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
@@ -164,15 +165,38 @@ export default function GraphPane() {
 
     if (isSel) {
       ctx.beginPath(); ctx.arc(node.x, node.y, r + 6, 0, 2 * Math.PI)
-      ctx.lineWidth = 2; ctx.strokeStyle = node.isUser ? '#C2410C' : BRAND_RED; ctx.stroke()
+      ctx.lineWidth = 2; ctx.strokeStyle = node.isUser ? USER_RED_DARK : BRAND_RED; ctx.stroke()
     }
 
-    ctx.fillStyle = node.isUser ? '#C2410C' : isSel ? BRAND_RED : LABEL_GRAY
+    ctx.fillStyle = node.isUser ? USER_RED_DARK : isSel ? BRAND_RED : LABEL_GRAY
     ctx.font = `${node.isUser || isSel ? '700' : '600'} 13px Inter, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
     ctx.fillText(node.label, node.x, node.y + r + 9)
   }, [selected])
+
+  const paintLink = useCallback((link, ctx) => {
+    const source = link.source
+    const target = link.target
+    if (!source || !target) return
+
+    const dx = target.x - source.x
+    const dy = target.y - source.y
+    const dist = Math.hypot(dx, dy)
+    if (!dist) return
+
+    const sx = dx / dist
+    const sy = dy / dist
+    const sourcePad = (source.size ?? 16) + (source.critical || source.isUser ? 11 : 3)
+    const targetPad = (target.size ?? 16) + (target.critical || target.isUser ? 11 : 3)
+
+    ctx.beginPath()
+    ctx.moveTo(source.x + sx * sourcePad, source.y + sy * sourcePad)
+    ctx.lineTo(target.x - sx * targetPad, target.y - sy * targetPad)
+    ctx.strokeStyle = 'rgba(180,176,170,0.55)'
+    ctx.lineWidth = 1.2
+    ctx.stroke()
+  }, [])
 
   // Selected node + team, retained during slide-out.
   const selNode = project.nodes.find(n => n.id === selected) || null
@@ -273,10 +297,10 @@ export default function GraphPane() {
                 height={dims.h}
                 nodeCanvasObject={paintNode}
                 nodeCanvasObjectMode={() => 'replace'}
+                linkCanvasObject={paintLink}
+                linkCanvasObjectMode={() => 'replace'}
                 nodeRelSize={6}
                 nodeVal={n => (n.size / 6) ** 2}
-                linkColor={() => 'rgba(180,176,170,0.55)'}
-                linkWidth={1.2}
                 enableNodeDrag={false}
                 cooldownTicks={0}
                 backgroundColor="#FFFFFF"
@@ -378,9 +402,9 @@ function IconBtn({ title, onClick, children }) {
 function LegendDot({ variant, label }) {
   const style =
     variant === 'user'
-      ? { backgroundColor: ORANGE, border: '2px solid #C2410C' }
+      ? { backgroundColor: USER_RED, border: `2px solid ${USER_RED_DARK}` }
       : variant === 'critical'
-      ? { backgroundColor: 'rgba(222,57,25,0.16)', border: `2px solid ${BRAND_RED}` }
+      ? { backgroundColor: 'rgba(242,85,90,0.16)', border: `2px solid ${BRAND_RED}` }
       : { backgroundColor: '#FFFFFF', border: `1.5px solid ${RING_GRAY}` }
   return (
     <div className="flex items-center gap-1.5">

@@ -23,6 +23,8 @@ chromadb==0.5.23
 sentence-transformers==3.3.1
 pypdf==5.1.0          # PyPDFLoader — explicit_rulebook (PDF) sources
 docx2txt==0.8         # Docx2txtLoader — tacit_expert_knowledge (DOCX) sources
+pymupdf>=1.24         # cited-page highlighting (text search + highlight annots);
+                      # the highlighted-PDF endpoint degrades to a plain page window without it
 
 # ── LLM generation (/api/ask synthesis) ──────────────────────────────────
 # Needs ANTHROPIC_API_KEY at runtime; /api/ask falls back to retrieval-only

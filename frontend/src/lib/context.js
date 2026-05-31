@@ -29,7 +29,7 @@ export function setActiveScreenContext(value = '') {
  * @param {string}   [opts.currentPage]   - override the inferred page
  * @returns {object} UserContext payload for /api/answer
  */
-export function collectUserContext({ recentQueries = [], currentPage, screenContext } = {}) {
+export function collectUserContext({ recentQueries = [], currentPage, screenContext, ...overrides } = {}) {
   let selectedText = ''
   try {
     selectedText = (window.getSelection?.()?.toString() ?? '').trim().slice(0, 400)
@@ -39,6 +39,7 @@ export function collectUserContext({ recentQueries = [], currentPage, screenCont
 
   return {
     ...USER_PROFILE,
+    ...overrides,
     current_page: currentPage || DEFAULT_PAGE,
     selected_text: selectedText || undefined,
     screen_context: screenContext || activeScreenContext || undefined,

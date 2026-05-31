@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximize2, LogOut } from 'lucide-react'
+import { MessageSquare, Clock, Library, Users, Network, Inbox, Minus, X, Maximize2, LogOut, Check } from 'lucide-react'
 
 const TABS = [
   { id: 'chat',     label: 'Assistant',       Icon: MessageSquare },
   { id: 'library',  label: 'Library',         Icon: Library },
   { id: 'experts',  label: 'Employees',       Icon: Users },
   { id: 'graph',    label: 'Knowledge Graph', Icon: Network },
-  { id: 'inbox',    label: 'Expert Inbox',    Icon: Inbox, expertOnly: true },
+  { id: 'inbox',    label: 'Inbox',           Icon: Inbox },
   { id: 'sessions', label: 'Sessions',        Icon: Clock },
 ]
 
@@ -26,14 +26,17 @@ function getDefaultPos() {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
-export default function FloatingWindow({ children, tabBadges = {}, user, onLogout }) {
+export default function FloatingWindow({ children, tabBadges = {}, user, onLogout, persona, personas = [], onSwitchPersona }) {
   const [mode, setMode] = useState('windowed')
   const [pos, setPos] = useState(getDefaultPos)
   const [size, setSize] = useState({ w: DEFAULT_W, h: DEFAULT_H })
   const [activeTab, setActiveTab] = useState('chat')
+  const [switchOpen, setSwitchOpen] = useState(false)
 
-  // Experts get the Expert Inbox; everyone else doesn't.
-  const tabs = TABS.filter(t => !t.expertOnly || user?.isExpert)
+  const activePerson = persona ?? user
+  const isExpert = persona?.type === 'expert' || (!persona && user?.isExpert)
+  // Experts get the Expert Inbox; everyone else gets the normal message inbox.
+  const tabs = TABS.filter(t => !t.expertOnly || isExpert)
   const visibleIds = new Set(tabs.map(t => t.id))
   // Children may ask to navigate (e.g. "go to inbox"); ignore hidden tabs.
   const goToTab = (id) => { if (visibleIds.has(id)) setActiveTab(id) }
@@ -116,7 +119,7 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
           <button
             className="no-drag relative grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-six text-white shadow-six-glow transition-transform hover:scale-105 active:scale-95"
             onClick={handleRestore}
-            title="Open SIXsens"
+            title="Open CorteX"
             type="button"
           >
             <span className="h-3.5 w-3.5 rounded-[5px] bg-white/90" />
@@ -124,7 +127,7 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
 
           <button className="no-drag relative min-w-0 flex-1 text-left" onClick={handleRestore} type="button">
             <p className="truncate font-display text-[13px] font-extrabold tracking-tight text-ink">
-              SIX<span className="text-neutral-400 font-semibold">sens</span>
+              Corte<span className="text-neutral-400 font-semibold">X</span>
             </p>
             <p className="truncate text-[10px] font-bold uppercase tracking-widest text-neutral-400">
               Ready
@@ -162,7 +165,7 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
         <div className={`flex-1 flex items-center gap-2 pointer-events-none ${isElectron ? 'drag-region' : ''}`}>
           <BrandGlyph size="md" />
           <span className="font-display text-sm font-bold text-ink tracking-tight">
-            SIX<span className="text-neutral-400 font-semibold">sens</span>
+            Corte<span className="text-neutral-400 font-semibold">X</span>
           </span>
           <span className="text-[10px] font-semibold text-neutral-400 uppercase tracking-widest">
             Institutional Assistant
@@ -184,6 +187,9 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
           <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5 overflow-y-auto">
             {tabs.map(({ id, label, Icon }) => {
               const badge = tabBadges[id] ?? 0
+              const tabLabel = id === 'inbox'
+                ? (persona?.type === 'expert' ? 'Expert Inbox' : 'Message Inbox')
+                : label
               return (
                 <button
                   key={id}
@@ -196,7 +202,7 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
                   type="button"
                 >
                   <Icon size={13} className="shrink-0" />
-                  <span className="flex-1">{label}</span>
+                  <span className="flex-1">{tabLabel}</span>
                   {badge > 0 && (
                     <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-six px-1 text-[9px] font-bold text-white shadow-six-glow">
                       {badge}
@@ -207,31 +213,65 @@ export default function FloatingWindow({ children, tabBadges = {}, user, onLogou
             })}
           </nav>
 
-          <div className={`border-t border-neutral-100 flex items-center ${activeTab === 'profile' ? 'bg-six-light' : ''}`}>
-            <button
-              type="button"
-              onClick={() => setActiveTab('profile')}
-              title="Open my profile"
-              className={`flex flex-1 min-w-0 items-center gap-2 px-3 py-3 text-left transition-colors ${
-                activeTab === 'profile' ? '' : 'hover:bg-neutral-50'
-              }`}
-            >
-              <div className={`h-6 w-6 rounded-full grid place-items-center text-[10px] font-bold shrink-0 ${
-                activeTab === 'profile' ? 'bg-six text-white' : 'bg-neutral-200 text-ink'
-              }`}>{user?.initials ?? 'C'}</div>
-              <div className="min-w-0 flex-1">
-                <p className={`text-[10px] font-semibold truncate ${activeTab === 'profile' ? 'text-six' : 'text-ink'}`}>{user?.name ?? 'Cosmina'}</p>
-                <p className="text-[9px] text-neutral-400 truncate">{user?.role ?? 'Compliance Officer'}</p>
+          <div className="relative border-t border-neutral-100 p-2">
+            {switchOpen && (
+              <div className="absolute bottom-full left-2 right-2 mb-2 rounded-xl border border-neutral-200 bg-white p-1.5 shadow-elevated">
+                <p className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-neutral-400">Switch account</p>
+                {personas.map(p => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => { onSwitchPersona?.(p.key); setSwitchOpen(false); setActiveTab('chat') }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] hover:bg-neutral-50"
+                  >
+                    <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-[9px] font-bold ${p.key === persona?.key ? 'bg-six text-white' : 'bg-neutral-100 text-neutral-500'}`}>
+                      {p.initials}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold text-ink">{p.name}</span>
+                      <span className="block truncate text-[9px] text-neutral-400">{p.type === 'expert' ? 'Expert' : 'Employee'}</span>
+                    </span>
+                    {p.key === persona?.key && <Check size={12} className="text-six" />}
+                  </button>
+                ))}
               </div>
-            </button>
-            <button
-              type="button"
-              title="Log out"
-              onClick={onLogout}
-              className="mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-md text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-ink"
-            >
-              <LogOut size={13} />
-            </button>
+            )}
+            <div className={`flex items-center gap-2 rounded-xl px-1 py-1 transition-colors ${
+              activeTab === 'profile' ? 'bg-six-light' : 'hover:bg-neutral-50'
+            }`}>
+              <button
+                type="button"
+                onClick={() => setActiveTab('profile')}
+                title="Open my profile"
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <div className={`h-7 w-7 rounded-full grid place-items-center text-[9px] font-bold shrink-0 ${
+                  activeTab === 'profile' ? 'bg-six text-white' : 'bg-neutral-200 text-ink'
+                }`}>{activePerson?.initials ?? 'CP'}</div>
+                <div className="min-w-0 flex-1">
+                  <p className={`text-[10px] font-semibold truncate ${activeTab === 'profile' ? 'text-six' : 'text-ink'}`}>{activePerson?.name ?? 'Cosmina'}</p>
+                  <p className="text-[9px] text-neutral-400 truncate">{activePerson?.role ?? 'Compliance Officer'}</p>
+                </div>
+              </button>
+              {personas.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSwitchOpen(v => !v)}
+                  title="Switch account"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-neutral-400 hover:bg-white hover:text-six"
+                >
+                  <Users size={13} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Log out"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-neutral-400 hover:bg-white hover:text-six"
+              >
+                <LogOut size={13} />
+              </button>
+            </div>
           </div>
         </aside>
 

@@ -11,7 +11,7 @@ export default function Login({ onLogin }) {
             <span className="h-3.5 w-3.5 rounded-[5px] bg-white/90" />
           </span>
           <h1 className="mt-3 font-display text-xl font-bold tracking-tight text-ink">
-            SIX<span className="text-neutral-400 font-semibold">sens</span>
+            Corte<span className="text-neutral-400 font-semibold">X</span>
           </h1>
           <p className="mt-1 text-xs text-neutral-400">Choose an account to sign in</p>
         </div>
@@ -46,7 +46,7 @@ export default function Login({ onLogin }) {
         </div>
 
         <p className="mt-5 text-center text-[10px] text-neutral-400">
-          Experts receive the Expert Inbox · others do not
+          Experts receive the Expert Inbox. Employees receive the Message Inbox.
         </p>
       </div>
     </div>

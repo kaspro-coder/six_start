@@ -4,7 +4,7 @@ import GroundedAnswer from './GroundedAnswer.jsx'
 import CreateKnowledgeRequest from './escalation/CreateKnowledgeRequest.jsx'
 import {
   Send, BookOpen, ArrowUpRight, Landmark, UserCheck,
-  FileText, ShieldCheck, Check, Copy, Zap, ClipboardList, User,
+  FileText, ShieldCheck, Check, Copy, Zap, ClipboardList, User, Eye, EyeOff,
 } from 'lucide-react'
 import { askAgent, askSixthSense, findExpertMatches, getGroundedAnswer, setDemoState } from '../lib/api.js'
 import { collectUserContext, setActiveScreenContext } from '../lib/context.js'
@@ -38,6 +38,7 @@ const DEMO_STEPS = [
   { part: '1B', label: 'Captured process', query: 'How do I verify SFDR data for Alpen Privatbank?' },
   { part: '2', label: 'Find Jacob', query: 'Who is Jacob Keller?' },
   { part: '3', label: 'Escalate unknown', query: 'How do we validate a new ESG-linked structured product with missing PAI attributes?' },
+  { part: '4', label: 'Legacy expert', query: 'Jacob is no longer available. Who can help with the ESG-linked structured product validation?' },
   { part: '5', label: 'Trust boundary', query: 'What do we know about Project Helios Alpha owned by Maria Novik?' },
 ]
 
@@ -56,12 +57,20 @@ function buildSources(ask) {
   }).slice(0, 6)
 }
 
-const GREETING = {
-  role: 'assistant', kind: 'text',
-  content: "Guten Tag, Cosmina 👋 I'm SIXsens. Ask me how to complete a task and I'll walk you through it using procedures captured from our experts.",
+function sleep(ms) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
-export default function ChatPane({ capturedProcedures = [], initialMessages, onMessagesChange, onSelectExpert, onRequestCreated, onGoToInbox }) {
+function isHardcodedDemoAnswer(answer) {
+  return ['demo_hardcoded', 'directory_demo', 'zero_knowledge_demo'].includes(answer?.engine)
+}
+
+const GREETING = {
+  role: 'assistant', kind: 'text',
+  content: "Guten Tag, Cosmina. I'm CorteX. Ask me how to complete a task and I'll walk you through it using procedures captured from our experts.",
+}
+
+export default function ChatPane({ persona, capturedProcedures = [], initialMessages, onMessagesChange, onSelectExpert, onRequestCreated, onGoToInbox }) {
   const [messages,   setMessages]   = useState(initialMessages ?? [GREETING])
   const [input,      setInput]      = useState('')
   const [mode,       setMode]       = useState('default') // 'default' | 'expert'
@@ -71,6 +80,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   const [escalation, setEscalation] = useState(null)
   const [routingMatches, setRoutingMatches] = useState([])
   const [jacobFormer, setJacobFormer] = useState(false)
+  const [showDemoJourney, setShowDemoJourney] = useState(false)
   const screenContextRef = useRef('')
   const scrollRef  = useRef(null)
   const dividerRef = useRef(null)
@@ -168,9 +178,15 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
       const context = collectUserContext({
         recentQueries,
         screenContext: screenContextRef.current,
+        user_id: persona?.id ?? 'user_cosmina',
+        role: persona?.role ?? 'Compliance Officer',
+        department: persona?.department ?? 'Regulatory Affairs',
       })
       const grounded = await getGroundedAnswer(question, context, mode)
       if (grounded && grounded.engine !== 'unavailable') {
+        if (isHardcodedDemoAnswer(grounded)) {
+          await sleep(3000)
+        }
         setMessages(m => [...m, { role: 'assistant', kind: 'grounded', content: grounded }])
         if (grounded.engine === 'escalation_needed' && grounded.escalation?.request_draft) {
           setEscalation(grounded.escalation)
@@ -220,7 +236,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
         title: `Question for ${expert.expert_name}: ${question}`.slice(0, 96),
         question,
         context_summary: `Manual routing override. ${expert.reason || 'Matched expert domain.'}`,
-        requester_user_id: 'user_cosmina',
+        requester_user_id: persona?.id ?? 'user_cosmina',
         routed_expert_ids: [expert.id],
         domain_tags: expert.matched_domains ?? expert.domains ?? [],
         related_source_ids: [],
@@ -238,7 +254,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
         role: 'assistant',
         kind: 'text',
         content: next
-          ? 'Demo state updated: Jacob is now marked as former employee. SIXsens will keep his retained knowledge but route live help to active alternatives.'
+          ? 'Demo state updated: Jacob is now marked as former employee. CorteX will keep his retained knowledge but route live help to active alternatives.'
           : 'Demo state updated: Jacob is active again in the employee directory.',
       }])
     } catch {
@@ -265,6 +281,8 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
             onToggleJacob={toggleJacobFormer}
             mode={mode}
             setMode={setMode}
+            showDemoJourney={showDemoJourney}
+            setShowDemoJourney={setShowDemoJourney}
           />
         ) : (
           <>
@@ -287,7 +305,10 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
       {!isEmpty && (
       <div className="border-t border-neutral-200/70 bg-white p-3 space-y-1.5">
         <div className="flex items-center justify-between">
-          <DemoJourney onSubmit={submit} jacobFormer={jacobFormer} onToggleJacob={toggleJacobFormer} compact />
+          <div className="flex items-center gap-2">
+            <DemoToggle show={showDemoJourney} setShow={setShowDemoJourney} />
+            {showDemoJourney && <DemoJourney onSubmit={submit} jacobFormer={jacobFormer} onToggleJacob={toggleJacobFormer} compact />}
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Answer detail</span>
             <ModeToggle mode={mode} setMode={setMode} />
@@ -344,7 +365,7 @@ export default function ChatPane({ capturedProcedures = [], initialMessages, onM
   )
 }
 
-function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobFormer, onToggleJacob, mode, setMode }) {
+function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobFormer, onToggleJacob, mode, setMode, showDemoJourney, setShowDemoJourney }) {
   return (
     <div className="dot-grid flex-1 flex flex-col items-center justify-center text-center px-5 -mx-4">
       <div className="grid h-11 w-11 place-items-center rounded-2xl bg-six shadow-six-glow mb-3">
@@ -354,7 +375,10 @@ function EmptyState({ input, setInput, onSubmit, routingMatches, onRoute, jacobF
       <p className="mt-1 max-w-xs text-xs leading-relaxed text-neutral-500">
         I'll walk you through it using procedures captured from experts — step by step, with sources.
       </p>
-      <DemoJourney onSubmit={onSubmit} jacobFormer={jacobFormer} onToggleJacob={onToggleJacob} />
+      <div className="mt-4 flex flex-col items-center gap-2">
+        <DemoToggle show={showDemoJourney} setShow={setShowDemoJourney} />
+        {showDemoJourney && <DemoJourney onSubmit={onSubmit} jacobFormer={jacobFormer} onToggleJacob={onToggleJacob} />}
+      </div>
       <form
         onSubmit={e => { e.preventDefault(); onSubmit() }}
         className="mt-5 w-full max-w-xl"
@@ -437,6 +461,24 @@ function DemoJourney({ onSubmit, jacobFormer, onToggleJacob, compact = false }) 
   )
 }
 
+function DemoToggle({ show, setShow }) {
+  const Icon = show ? EyeOff : Eye
+  return (
+    <button
+      type="button"
+      onClick={() => setShow(v => !v)}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors ${
+        show
+          ? 'border-six/30 bg-six-light text-six'
+          : 'border-neutral-200 bg-white text-neutral-400 hover:border-six/40 hover:text-six'
+      }`}
+      title={show ? 'Hide pitch demo controls' : 'Show pitch demo controls'}
+    >
+      <Icon size={11} /> Demo
+    </button>
+  )
+}
+
 const MODES = [
   { id: 'default', label: 'Default', hint: 'Concise & conceptual — only the essentials' },
   { id: 'expert',  label: 'Expert',  hint: 'Full technical detail: references, fields, edge cases' },
@@ -500,7 +542,7 @@ function Message({ message, onAsk, onCiteClick, onSelectExpert, onEscalate }) {
         {message.kind === 'rag'       && <RagAnswer   data={message.content} onAsk={onAsk} onCiteClick={onCiteClick} />}
         {message.kind === 'procedure' && <Procedure   data={message.content} />}
         {message.kind === 'text'      && (
-          <div className={`inline-block rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${isUser ? 'bg-ink text-white rounded-tr-md' : 'bg-neutral-100 text-ink rounded-tl-md'}`}>
+          <div className={`inline-block rounded-2xl px-3.5 py-2 text-left text-sm leading-relaxed ${isUser ? 'bg-ink text-white rounded-tr-md' : 'bg-neutral-100 text-ink rounded-tl-md'}`}>
             {message.content}
           </div>
         )}
@@ -573,8 +615,8 @@ function AgentAnswer({ data, onAsk, onCiteClick, onSelectExpert }) {
         <span className="grid h-4 w-4 place-items-center rounded-md bg-six">
           <span className="h-1 w-1 rounded-[1px] bg-white/90" />
         </span>
-        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">SIXth Sense</span>
-        <span className="text-[10px] text-neutral-400">compliance co-pilot</span>
+        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">CorteX</span>
+        <span className="text-[10px] text-neutral-400">compliance assistant</span>
       </div>
       {lead && (
         <p className="text-xs text-ink mb-2 leading-relaxed">
@@ -644,7 +686,7 @@ function RagAnswer({ data, onAsk, onCiteClick }) {
         <span className="grid h-4 w-4 place-items-center rounded-md bg-six">
           <span className="h-1 w-1 rounded-[1px] bg-white/90" />
         </span>
-        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">SIXth Sense</span>
+        <span className="font-display text-[10px] font-bold uppercase tracking-widest text-ink">CorteX</span>
         <span className="text-[10px] text-neutral-400">grounded answer</span>
       </div>
       <p className="font-display font-bold text-sm text-ink">{a.title}</p>

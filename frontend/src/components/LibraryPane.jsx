@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { FileText, Search, Download } from 'lucide-react'
+import { FileText, Search, Download, Sparkles, CheckCircle2 } from 'lucide-react'
 import DocViewer from './DocViewer.jsx'
+import { listKnowledge } from '../lib/api.js'
 
 // Nicer display titles for the known corpus files (fallback cleans the rest).
 const TITLES = {
@@ -61,6 +62,7 @@ const GRID = 'grid grid-cols-[minmax(0,1fr)_180px_150px_120px_56px] items-center
 
 export default function LibraryPane() {
   const [docs, setDocs]       = useState([])
+  const [knowledge, setKnowledge] = useState([])
   const [query, setQuery]     = useState('')
   const [dept, setDept]       = useState('All')
   const [type, setType]       = useState('All')
@@ -68,25 +70,53 @@ export default function LibraryPane() {
   const [cite, setCite]       = useState(null)
 
   useEffect(() => {
-    fetch('/api/documents')
-      .then(r => r.json())
-      .then(data => { setDocs(data); setLoading(false) })
+    let cancelled = false
+    Promise.all([
+      fetch('/api/documents').then(r => r.json()),
+      listKnowledge().catch(() => ({ persisted: [] })),
+    ])
+      .then(([documents, knowledgeData]) => {
+        if (cancelled) return
+        setDocs(documents)
+        // Library should show explicit source documents plus knowledge that an
+        // expert deliberately saved through the resolution form. Seed knowledge
+        // remains available to retrieval, but is not displayed as user-saved library content.
+        setKnowledge(knowledgeData.persisted ?? [])
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
+    return () => { cancelled = true }
   }, [])
 
   // Enrich each doc with derived display fields.
-  const rows = useMemo(() => docs.map(d => ({
-    ...d,
-    title: titleOf(d.filename),
-    dept: deptOf(d.filename),
-    type: typeOf(d.filename, d.source_type),
-  })), [docs])
+  const rows = useMemo(() => [
+    ...docs.map(d => ({
+      ...d,
+      row_id: `doc:${d.filename}`,
+      row_kind: 'document',
+      title: titleOf(d.filename),
+      dept: deptOf(d.filename),
+      type: typeOf(d.filename, d.source_type),
+      searchable: `${d.filename} ${titleOf(d.filename)}`,
+    })),
+    ...knowledge.map(k => ({
+      ...k,
+      row_id: `knowledge:${k.id}`,
+      row_kind: 'knowledge',
+      filename: k.source_file ?? k.id,
+      title: k.title,
+      dept: k.department ?? 'Company Knowledge',
+      type: k.type === 'expert_resolution' ? 'Expert Resolution' : typeLabel(k.type),
+      updated: (k.updated_at ?? k.created_at ?? '').slice(0, 10),
+      searchable: `${k.title ?? ''} ${k.summary ?? ''} ${k.content ?? ''} ${(k.tags ?? []).join(' ')}`,
+    })),
+  ], [docs, knowledge])
 
   const depts = useMemo(() => ['All', ...Array.from(new Set(rows.map(r => r.dept))).sort()], [rows])
   const types = useMemo(() => ['All', ...Array.from(new Set(rows.map(r => r.type))).sort()], [rows])
 
   const filtered = rows.filter(r =>
-    (r.title.toLowerCase().includes(query.toLowerCase()) || r.filename.toLowerCase().includes(query.toLowerCase())) &&
+    (r.searchable ?? '').toLowerCase().includes(query.toLowerCase()) &&
     (dept === 'All' || r.dept === dept) &&
     (type === 'All' || r.type === type)
   )
@@ -137,10 +167,12 @@ export default function LibraryPane() {
 
               {filtered.map(doc => (
                 <DocRow
-                  key={doc.filename}
+                  key={doc.row_id}
                   doc={doc}
-                  active={cite?.document === doc.filename}
-                  onOpen={() => setCite({ document: doc.filename, source_type: doc.source_type, content: null, page: null })}
+                  active={cite?.document === doc.filename || cite?.knowledge?.id === doc.id}
+                  onOpen={() => setCite(doc.row_kind === 'knowledge'
+                    ? { knowledge: doc }
+                    : { document: doc.filename, source_type: doc.source_type, content: null, page: null })}
                 />
               ))}
             </div>
@@ -160,10 +192,19 @@ export default function LibraryPane() {
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        {shownCite && <DocViewer cite={shownCite} onClose={() => setCite(null)} />}
+        {shownCite?.knowledge
+          ? <KnowledgeViewer item={shownCite.knowledge} onClose={() => setCite(null)} />
+          : shownCite && <DocViewer cite={shownCite} onClose={() => setCite(null)} />}
       </aside>
     </div>
   )
+}
+
+function typeLabel(type) {
+  return String(type ?? 'Knowledge')
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
 }
 
 function FilterSelect({ value, onChange, options }) {
@@ -179,15 +220,18 @@ function FilterSelect({ value, onChange, options }) {
 }
 
 function DocRow({ doc, active, onOpen }) {
+  const isKnowledge = doc.row_kind === 'knowledge'
   return (
     <div
       onClick={onOpen}
       className={`${GRID} px-5 py-3 border-b border-neutral-100/70 last:border-0 cursor-pointer transition-colors ${
-        active ? 'bg-six-light' : 'hover:bg-neutral-50'
+        active ? 'bg-neutral-50 shadow-[inset_3px_0_0_0_var(--color-six)]' : 'bg-white hover:bg-neutral-50'
       }`}
     >
       <div className="flex items-center gap-2.5 min-w-0">
-        <FileText size={15} className="shrink-0 text-neutral-300" />
+        {isKnowledge
+          ? <Sparkles size={15} className="shrink-0 text-six" />
+          : <FileText size={15} className="shrink-0 text-neutral-300" />}
         <span className="truncate text-sm font-semibold text-ink">{doc.title}</span>
       </div>
 
@@ -202,16 +246,67 @@ function DocRow({ doc, active, onOpen }) {
       <span className="font-mono text-xs text-neutral-400">{doc.updated ?? '—'}</span>
 
       <span className="flex items-center justify-end">
-        <a
-          href={`/api/documents/${encodeURIComponent(doc.filename)}`}
-          download
-          title="Download"
-          onClick={e => e.stopPropagation()}
-          className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-six"
-        >
-          <Download size={15} />
-        </a>
+        {isKnowledge ? (
+          <span className="grid h-7 w-7 place-items-center rounded-lg text-emerald-600">
+            <CheckCircle2 size={15} />
+          </span>
+        ) : (
+          <a
+            href={`/api/documents/${encodeURIComponent(doc.filename)}`}
+            download
+            title="Download"
+            onClick={e => e.stopPropagation()}
+            className="grid h-7 w-7 place-items-center rounded-lg text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-six"
+          >
+            <Download size={15} />
+          </a>
+        )}
       </span>
+    </div>
+  )
+}
+
+function KnowledgeViewer({ item, onClose }) {
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-start gap-3 border-b border-neutral-100 px-5 py-4">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-six-light text-six">
+          <Sparkles size={17} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-sm font-bold text-ink">{item.title}</p>
+          <p className="mt-0.5 text-[11px] text-neutral-400">
+            {typeLabel(item.type)} · {item.department ?? 'Company Knowledge'} · {item.updated ?? 'no date'}
+          </p>
+        </div>
+        <button onClick={onClose} className="rounded-lg px-2 py-1 text-xs font-semibold text-neutral-400 hover:bg-neutral-100 hover:text-ink">
+          Close
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto scroll-slim px-5 py-4 space-y-4">
+        {item.summary && (
+          <section>
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-neutral-400">Summary</p>
+            <p className="text-sm leading-relaxed text-ink">{item.summary}</p>
+          </section>
+        )}
+        <section>
+          <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-neutral-400">Reusable knowledge</p>
+          <div className="whitespace-pre-wrap rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs leading-relaxed text-neutral-700">
+            {item.content ?? 'No content saved for this knowledge item.'}
+          </div>
+        </section>
+        {item.related_documents?.length > 0 && (
+          <section>
+            <p className="mb-1 text-[10px] font-bold uppercase tracking-widest text-neutral-400">Attached documents</p>
+            <div className="flex flex-wrap gap-1.5">
+              {item.related_documents.map(doc => (
+                <span key={doc} className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-500">{doc}</span>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   )
 }

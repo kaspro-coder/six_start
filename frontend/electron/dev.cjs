@@ -101,7 +101,7 @@ async function main() {
   const port = await getAvailablePort(preferredPort)
   const startUrl = `http://${host}:${port}`
 
-  console.log(`[SIXsens dev] Starting Vite on ${startUrl}`)
+  console.log(`[CorteX dev] Starting Vite on ${startUrl}`)
   viteProcess = spawnProcess('vite', process.execPath, [
     viteCli,
     '--host',
@@ -113,14 +113,14 @@ async function main() {
 
   viteProcess.on('exit', (code) => {
     if (!shuttingDown && code !== null && code !== 0) {
-      console.error(`[SIXsens dev] Vite exited with code ${code}.`)
+      console.error(`[CorteX dev] Vite exited with code ${code}.`)
       shutdown(code)
     }
   })
 
   await waitForVite(port, startUrl)
 
-  console.log(`[SIXsens dev] Opening Electron overlay at ${startUrl}`)
+  console.log(`[CorteX dev] Opening Electron overlay at ${startUrl}`)
   electronProcess = spawnProcess('electron', electronExe, ['.'], {
     ELECTRON_START_URL: startUrl,
   })
@@ -134,6 +134,6 @@ process.on('SIGINT', () => shutdown(0))
 process.on('SIGTERM', () => shutdown(0))
 
 main().catch((error) => {
-  console.error('[SIXsens dev]', error.message)
+  console.error('[CorteX dev]', error.message)
   shutdown(1)
 })

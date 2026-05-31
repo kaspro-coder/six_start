@@ -89,7 +89,7 @@ const EMAILS = [
 
 const STATUS_STYLES = {
   active: 'bg-emerald-50 text-emerald-600',
-  review: 'bg-amber-50 text-amber-600',
+  review: 'bg-six-light text-six',
   done:   'bg-neutral-100 text-neutral-500',
 }
 
@@ -100,9 +100,26 @@ const SUBTABS = [
   { id: 'projects',    label: 'Projects',    Icon: FolderKanban },
 ]
 
-export default function ProfilePane({ sessions = [], onOpenDiscussion }) {
+export default function ProfilePane({ persona, sessions = [], onOpenDiscussion }) {
   const [tab, setTab] = useState('overview')
   const unread = EMAILS.filter(e => e.unread).length
+  const user = persona ? {
+    ...CURRENT_USER,
+    name: persona.fullName ?? persona.name,
+    initials: persona.initials,
+    role: persona.role,
+    department: persona.department,
+    email: persona.id?.startsWith('exp_')
+      ? `${(persona.fullName ?? persona.name).toLowerCase().replace(/\s+/g, '.')}@six-group.example`
+      : CURRENT_USER.email,
+    employeeId: persona.id,
+    bio: persona.type === 'expert'
+      ? `${persona.fullName ?? persona.name} is a domain expert in ${persona.department}, available to resolve routed CorteX knowledge requests and convert answers into reusable company knowledge.`
+      : CURRENT_USER.bio,
+    expertise: persona.type === 'expert'
+      ? ['Expert resolution', 'Reusable knowledge', persona.department]
+      : CURRENT_USER.expertise,
+  } : CURRENT_USER
 
   return (
     <div className="flex flex-col h-full bg-canvas">
@@ -110,23 +127,23 @@ export default function ProfilePane({ sessions = [], onOpenDiscussion }) {
       <div className="shrink-0 bg-white border-b border-neutral-200/80 px-6 pt-6 pb-4">
         <div className="flex items-start gap-4">
           <div className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-six text-white text-xl font-bold shadow-six-glow">
-            {CURRENT_USER.initials}
+            {user.initials}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-display text-lg font-bold text-ink truncate">{CURRENT_USER.name}</p>
-            <p className="text-sm text-neutral-500">{CURRENT_USER.role}</p>
+            <p className="font-display text-lg font-bold text-ink truncate">{user.name}</p>
+            <p className="text-sm text-neutral-500">{user.role}</p>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-neutral-400">
-              <span className="inline-flex items-center gap-1"><Building2 size={11} /> {CURRENT_USER.department}</span>
-              <span className="inline-flex items-center gap-1"><MapPin size={11} /> {CURRENT_USER.location}</span>
+              <span className="inline-flex items-center gap-1"><Building2 size={11} /> {user.department}</span>
+              <span className="inline-flex items-center gap-1"><MapPin size={11} /> {user.location}</span>
             </div>
           </div>
         </div>
 
         {/* Contact + stats */}
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          <ContactChip Icon={Mail} href={`mailto:${CURRENT_USER.email}`} value={CURRENT_USER.email} />
-          <ContactChip Icon={Phone} href={`tel:${CURRENT_USER.phone.replace(/\s/g, '')}`} value={CURRENT_USER.phone} />
-          <StatChip Icon={Award} label="Years at SIX" value={CURRENT_USER.years} />
+          <ContactChip Icon={Mail} href={`mailto:${user.email}`} value={user.email} />
+          <ContactChip Icon={Phone} href={`tel:${user.phone.replace(/\s/g, '')}`} value={user.phone} />
+          <StatChip Icon={Award} label="Years at SIX" value={user.years} />
           <StatChip Icon={FolderKanban} label="Active projects" value={PROJECTS.filter(p => p.status === 'active').length} />
         </div>
       </div>
@@ -154,7 +171,7 @@ export default function ProfilePane({ sessions = [], onOpenDiscussion }) {
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto scroll-slim px-6 py-5">
-        {tab === 'overview'    && <Overview />}
+        {tab === 'overview'    && <Overview user={user} />}
         {tab === 'discussions' && <Discussions sessions={sessions} onOpenDiscussion={onOpenDiscussion} />}
         {tab === 'inbox'       && <InboxList />}
         {tab === 'projects'    && <ProjectList />}
@@ -191,18 +208,18 @@ function SectionTitle({ children }) {
   return <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400 mb-2.5">{children}</p>
 }
 
-function Overview() {
+function Overview({ user }) {
   return (
     <div className="space-y-6">
       <div>
         <SectionTitle>About</SectionTitle>
-        <p className="text-xs text-ink leading-relaxed">{CURRENT_USER.bio}</p>
+        <p className="text-xs text-ink leading-relaxed">{user.bio}</p>
       </div>
 
       <div>
         <SectionTitle>Areas of expertise</SectionTitle>
         <div className="flex flex-wrap gap-1.5">
-          {CURRENT_USER.expertise.map(tag => (
+          {user.expertise.map(tag => (
             <span key={tag} className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-six-light text-six">{tag}</span>
           ))}
         </div>
@@ -211,10 +228,10 @@ function Overview() {
       <div>
         <SectionTitle>Details</SectionTitle>
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-xs">
-          <DetailRow label="Employee ID" value={CURRENT_USER.employeeId} />
-          <DetailRow label="Reports to" value={CURRENT_USER.manager} />
-          <DetailRow label="Department" value={CURRENT_USER.department} />
-          <DetailRow label="At SIX since" value={fmtMonth(CURRENT_USER.startedAt)} />
+          <DetailRow label="Employee ID" value={user.employeeId} />
+          <DetailRow label="Reports to" value={user.manager} />
+          <DetailRow label="Department" value={user.department} />
+          <DetailRow label="At SIX since" value={fmtMonth(user.startedAt)} />
         </dl>
       </div>
     </div>

@@ -6,7 +6,7 @@ const PRIORITIES = ['low', 'medium', 'high']
 
 const PRIORITY_COLORS = {
   low:    'border-neutral-200 text-neutral-500',
-  medium: 'border-amber-300 text-amber-600 bg-amber-50',
+  medium: 'border-six/30 text-six bg-six-light',
   high:   'border-red-300 text-red-600 bg-red-50',
 }
 
@@ -34,7 +34,7 @@ function autoTitle(name, body) {
   return `Question for ${name}: ${snippet}${snippet.length >= 60 ? '…' : ''}`
 }
 
-export default function ContactExpertModal({ expert: raw, onClose, onSubmitted, onGoToInbox }) {
+export default function ContactExpertModal({ expert: raw, persona, onClose, onSubmitted, onGoToInbox }) {
   const expert = normalize(raw)
 
   const [body,     setBody]     = useState('')
@@ -51,7 +51,7 @@ export default function ContactExpertModal({ expert: raw, onClose, onSubmitted, 
         title:              autoTitle(expert.name, body),
         question:           body.trim(),
         context_summary:    `Sent directly to ${expert.name} (${expert.role}) via Contact Expert.`,
-        requester_user_id:  'user_cosmina',
+        requester_user_id:  persona?.id ?? 'user_cosmina',
         routed_expert_ids:  [expert.id],
         domain_tags:        [],
         priority,
